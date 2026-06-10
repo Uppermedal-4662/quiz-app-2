@@ -85,15 +85,17 @@ class AuthGate extends StatelessWidget {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
 
-        if (auth.role == UserRole.guest) {
+        // If explicitly in Guest mode, show HomeScreen
+        if (auth.isGuest) {
           return const HomeScreen();
         }
 
+        // If not authenticated, show AuthScreen (Login/Signup)
         if (!auth.isAuthenticated) {
           return const AuthScreen();
         }
 
-        // Authenticated users
+        // Authenticated users - route based on role stored in Firestore
         switch (auth.role) {
           case UserRole.superAdmin:
             return const SuperAdminDashboard();

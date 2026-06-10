@@ -12,15 +12,16 @@ class AuthService extends ChangeNotifier {
   final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
 
   User? _user;
-  UserRole _role = UserRole.guest;
+  UserRole? _role; // Change to nullable to represent uninitialized/no role chosen
   bool _isLoading = true;
   String? _currentDeviceId;
   String? _logoutReason;
   
   User? get user => _user;
-  UserRole get role => _role;
+  UserRole get role => _role ?? UserRole.user; // Default to user if not guest
   bool get isLoading => _isLoading;
   bool get isAuthenticated => _user != null;
+  bool get isGuest => _role == UserRole.guest;
   String? get logoutReason => _logoutReason;
 
   void clearLogoutReason() {
@@ -53,7 +54,10 @@ class AuthService extends ChangeNotifier {
   Future<void> _onAuthStateChanged(User? firebaseUser) async {
     _user = firebaseUser;
     if (_user == null) {
-      _role = UserRole.guest;
+      // If we were a guest before, stay a guest. Otherwise, no role.
+      if (_role != UserRole.guest) {
+        _role = null; 
+      }
       _isLoading = false;
       notifyListeners();
     } else {
