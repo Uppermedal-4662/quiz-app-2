@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../providers/quiz_provider.dart';
+import '../providers/cloud_provider.dart';
 import '../services/auth_service.dart';
 import 'manual_import_screen.dart';
 import 'content_management_screen.dart';
@@ -16,6 +17,52 @@ class ClassManagementScreen extends StatefulWidget {
 }
 
 class _ClassManagementScreenState extends State<ClassManagementScreen> {
+  void _showContactDialog() {
+    final auth = context.read<AuthService>();
+    if (auth.isGuest) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please log in to contact the admin.')));
+      return;
+    }
+
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Contact Admin'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Send a message to the Super Admin. Limit: 5 per day.', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'Your message...'),
+              maxLines: 4,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              if (controller.text.trim().isEmpty) return;
+              try {
+                await context.read<CloudProvider>().sendMessageToAdmin(auth.user!.uid, auth.user!.email!, controller.text.trim());
+                if (mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Message sent!')));
+                }
+              } catch (e) {
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+              }
+            },
+            child: const Text('Send'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -85,6 +132,37 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
     }
   }
 
+  Future<void> _renameClass(int id, String currentName) async {
+    final controller = TextEditingController(text: currentName);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename Class'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(hintText: 'New Class Name'),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+
+    if (newName != null && newName.isNotEmpty && newName != currentName) {
+      if (mounted) {
+        await Provider.of<QuizProvider>(context, listen: false).renameClass(id, newName);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final userRole = context.watch<AuthService>().role;
@@ -93,6 +171,13 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Manage Classes'),
+        actions: [
+          IconButton(
+            onPressed: _showContactDialog,
+            icon: const Icon(Icons.contact_support),
+            tooltip: 'Contact Admin',
+          ),
+        ],
       ),
       body: Consumer<QuizProvider>(
         builder: (context, provider, child) {
@@ -129,6 +214,11 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit, size: 20),
+                            onPressed: () => _renameClass(cls['id'], cls['name']),
+                            tooltip: 'Rename Class',
+                          ),
                           IconButton(
                             icon: const Icon(Icons.list_alt),
                             onPressed: () {

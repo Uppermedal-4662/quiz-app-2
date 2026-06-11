@@ -7,6 +7,64 @@ class CloudProvider with ChangeNotifier {
 
   bool get isLoading => _isLoading;
 
+  // --- App Configuration ---
+
+  Future<Map<String, dynamic>> getAppConfig() async {
+    final doc = await _firestore.collection('app_config').doc('global').get();
+    return doc.data() ?? {};
+  }
+
+  Future<void> updateAppConfig(Map<String, dynamic> config) async {
+    await _firestore.collection('app_config').doc('global').set(config, SetOptions(merge: true));
+  }
+
+  // --- Messaging (Rate Limited) ---
+
+  Future<void> sendMessageToAdmin(String userId, String email, String message) async {
+    // 1. Check if user is blocked from messaging
+    final userDoc = await _firestore.collection('users').doc(userId).get();
+    if (userDoc.data()?['can_message'] == false) {
+      throw Exception('Your messaging privileges have been suspended by an administrator.');
+    }
+
+    // 2. Check Rate Limit (5 per day)
+    final now = DateTime.now();
+    final startOfDay = DateTime(now.year, now.month, now.day);
+    
+    final snapshot = await _firestore.collection('messages')
+        .where('sender_uid', isEqualTo: userId)
+        .where('timestamp', isGreaterThanOrEqualTo: startOfDay)
+        .get();
+    
+    if (snapshot.docs.length >= 5) {
+      throw Exception('Daily message limit reached (5 per day). Please try again tomorrow.');
+    }
+
+    // 3. Send Message
+    await _firestore.collection('messages').add({
+      'sender_uid': userId,
+      'sender_email': email,
+      'message': message,
+      'timestamp': FieldValue.serverTimestamp(),
+      'reply': null,
+    });
+  }
+
+  Future<void> replyToMessage(String messageId, String adminEmail, String replyText) async {
+    await _firestore.collection('messages').doc(messageId).update({
+      'reply': replyText,
+      'replied_by': adminEmail,
+      'replied_at': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getAdminInbox() async {
+    final snapshot = await _firestore.collection('messages')
+        .orderBy('timestamp', descending: true)
+        .get();
+    return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+  }
+
   // --- Super Admin Actions ---
 
   Future<List<Map<String, dynamic>>> getAllUsers() async {
@@ -22,6 +80,18 @@ class CloudProvider with ChangeNotifier {
     await _firestore.collection('users').doc(uid).update({'accessible_banks': bankIds});
   }
 
+  Future<void> updateUserBanStatus(String uid, {bool? isDisabled, bool? canMessage, bool? canAccessQuizzes, bool? canViewInbox}) async {
+    final Map<String, dynamic> updates = {};
+    if (isDisabled != null) updates['is_disabled'] = isDisabled;
+    if (canMessage != null) updates['can_message'] = canMessage;
+    if (canAccessQuizzes != null) updates['can_access_quizzes'] = canAccessQuizzes;
+    if (canViewInbox != null) updates['can_view_inbox'] = canViewInbox;
+    
+    if (updates.isNotEmpty) {
+      await _firestore.collection('users').doc(uid).update(updates);
+    }
+  }
+
   // --- Admin Actions ---
 
   Future<String> createQuestionBank(String name, String description, String adminUid) async {
@@ -30,6 +100,7 @@ class CloudProvider with ChangeNotifier {
       'description': description,
       'created_by': adminUid,
       'created_at': FieldValue.serverTimestamp(),
+      'updated_at': FieldValue.serverTimestamp(),
     });
     return docRef.id;
   }
@@ -39,7 +110,8 @@ class CloudProvider with ChangeNotifier {
     notifyListeners();
     try {
       final batch = _firestore.batch();
-      final collection = _firestore.collection('question_banks').doc(bankId).collection('cloud_questions');
+      final bankRef = _firestore.collection('question_banks').doc(bankId);
+      final collection = bankRef.collection('cloud_questions');
       
       for (var q in questions) {
         final docRef = collection.doc();
@@ -50,6 +122,10 @@ class CloudProvider with ChangeNotifier {
           'created_at': FieldValue.serverTimestamp(),
         });
       }
+
+      // Update the bank's updated_at timestamp
+      batch.update(bankRef, {'updated_at': FieldValue.serverTimestamp()});
+      
       await batch.commit();
     } finally {
       _isLoading = false;
@@ -69,7 +145,6 @@ class CloudProvider with ChangeNotifier {
   Future<List<Map<String, dynamic>>> getAccessibleBanks(List<String> bankIds) async {
     if (bankIds.isEmpty) return [];
     
-    // Firestore 'whereIn' supports up to 30 items. For simplicity here:
     final snapshot = await _firestore.collection('question_banks')
         .where(FieldPath.documentId, whereIn: bankIds)
         .get();

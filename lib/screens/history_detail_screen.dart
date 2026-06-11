@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:provider/provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import '../providers/quiz_provider.dart';
 import '../services/database_service.dart';
 import '../services/security_service.dart';
@@ -22,17 +26,19 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _detailsFuture = _fetchDetails();
+    _refresh();
+  }
+
+  void _refresh() {
+    setState(() {
+      _detailsFuture = _fetchDetails();
+    });
   }
 
   Future<List<Map<String, dynamic>>> _fetchDetails() async {
     final db = DatabaseService();
     final rawDetails = await db.getHistoryDetails(widget.historyItem['id']);
-    
-    // We need to fetch the question text and options to show them
-    // Since history_details only stores IDs and results
     final List<Map<String, dynamic>> enrichedDetails = [];
-    
     final allQuestions = await db.getQuestionsByClass(widget.historyItem['class_id']);
     
     for (var detail in rawDetails) {
@@ -52,6 +58,7 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
 
         enrichedDetails.add({
           ...detail,
+          'question_data': qData,
           'question_text': decryptedText,
           'options': decryptedOptions,
           'correct_answers': decryptedCorrect,
@@ -59,8 +66,155 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
         });
       }
     }
-    
     return enrichedDetails;
+  }
+
+  Future<void> _exportToPdf(List<Map<String, dynamic>> details) async {
+    final pdf = pw.Document();
+    
+    pdf.addPage(
+      pw.MultiPage(
+        build: (context) => [
+          pw.Header(level: 0, child: pw.Text("Quiz Review: ${widget.historyItem['class_name']}")),
+          pw.Paragraph(text: "Score: ${widget.historyItem['score']} / ${widget.historyItem['total_questions']}"),
+          pw.Paragraph(text: "Time Taken: ${widget.historyItem['time_taken_seconds']}s"),
+          pw.Paragraph(text: "Date: ${widget.historyItem['date_taken']}"),
+          pw.SizedBox(height: 20),
+          ...details.map((d) {
+            final bool isCorrect = d['is_correct'] == 1;
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text("${isCorrect ? '[CORRECT]' : '[WRONG]'} ${d['question_text']}", style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                pw.Bullet(text: "Your Answer: ${d['user_answers'].join(', ')}"),
+                pw.Bullet(text: "Correct Answer: ${d['correct_answers'].join(', ')}"),
+                pw.SizedBox(height: 10),
+              ],
+            );
+          }),
+        ],
+      ),
+    );
+
+    await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdf.save());
+  }
+
+  void _showEditDialog(Map<String, dynamic> detail) {
+    final qData = detail['question_data'];
+    final textController = TextEditingController(text: detail['question_text']);
+    final List<TextEditingController> optionControllers = [];
+    final List<bool> isCorrectList = [];
+
+    final List<dynamic> options = detail['options'];
+    final List<dynamic> correctAnswers = detail['correct_answers'];
+    for (var opt in options) {
+      optionControllers.add(TextEditingController(text: opt.toString()));
+      isCorrectList.add(correctAnswers.contains(opt.toString()));
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Edit Question (from History)'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: textController,
+                    decoration: const InputDecoration(labelText: 'Question Text', border: OutlineInputBorder()),
+                    maxLines: 3,
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Options:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      TextButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            optionControllers.add(TextEditingController());
+                            isCorrectList.add(false);
+                          });
+                        },
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add'),
+                      ),
+                    ],
+                  ),
+                  ...List.generate(optionControllers.length, (index) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8.0),
+                      child: Row(
+                        children: [
+                          Checkbox(
+                            value: isCorrectList[index],
+                            onChanged: (val) {
+                              setState(() {
+                                isCorrectList[index] = val!;
+                              });
+                            },
+                          ),
+                          Expanded(
+                            child: TextField(
+                              controller: optionControllers[index],
+                              decoration: InputDecoration(
+                                labelText: 'Option ${index + 1}',
+                                suffixIcon: optionControllers.length > 2
+                                    ? IconButton(
+                                        icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
+                                        onPressed: () {
+                                          setState(() {
+                                            optionControllers.removeAt(index);
+                                            isCorrectList.removeAt(index);
+                                          });
+                                        },
+                                      )
+                                    : null,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                final text = textController.text.trim();
+                final opts = optionControllers.map((c) => c.text.trim()).toList();
+                final List<String> selectedAnswers = [];
+                for (int i = 0; i < opts.length; i++) {
+                  if (isCorrectList[i]) selectedAnswers.add(opts[i]);
+                }
+
+                if (text.isEmpty || opts.any((o) => o.isEmpty) || selectedAnswers.isEmpty) return;
+
+                try {
+                  await context.read<QuizProvider>().updateQuestion(qData['id'], text, opts, selectedAnswers);
+                  if (mounted) {
+                    Navigator.pop(context);
+                    _refresh();
+                  }
+                } catch (e) {
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                }
+              },
+              child: const Text('Save Fix'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -71,6 +225,21 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Quiz Review'),
+        actions: [
+          FutureBuilder<List<Map<String, dynamic>>>(
+            future: _detailsFuture,
+            builder: (context, snapshot) {
+              if (snapshot.hasData) {
+                return IconButton(
+                  onPressed: () => _exportToPdf(snapshot.data!),
+                  icon: const Icon(Icons.picture_as_pdf),
+                  tooltip: 'Export to PDF',
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -96,9 +265,7 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
                 if (snapshot.hasError) {
                   return Center(child: Text('Error: ${snapshot.error}'));
                 }
-                
                 final details = snapshot.data ?? [];
-                
                 return ListView.builder(
                   itemCount: details.length,
                   padding: const EdgeInsets.all(16),
@@ -107,7 +274,6 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
                     final isCorrect = d['is_correct'] == 1;
                     final List<dynamic> userAns = d['user_answers'];
                     final List<dynamic> correctAns = d['correct_answers'];
-
                     return Card(
                       margin: const EdgeInsets.only(bottom: 16),
                       shape: RoundedRectangleBorder(
@@ -142,7 +308,6 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
                             ...(d['options'] as List).map((opt) {
                               final bool wasSelected = userAns.contains(opt);
                               final bool isActuallyCorrect = correctAns.contains(opt);
-                              
                               Color? textColor;
                               IconData? icon;
                               if (isActuallyCorrect) {
@@ -152,7 +317,6 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
                                 textColor = Colors.red.shade700;
                                 icon = Icons.cancel;
                               }
-
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 4),
                                 child: Row(
@@ -171,7 +335,18 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
                                   ],
                                 ),
                               );
-                            }),
+                            }).toList(),
+                            const SizedBox(height: 16),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                TextButton.icon(
+                                  onPressed: () => _showEditDialog(d),
+                                  icon: const Icon(Icons.edit_note, color: Colors.orange),
+                                  label: const Text('Fix Question Error', style: TextStyle(color: Colors.orange)),
+                                ),
+                              ],
+                            ),
                           ],
                         ),
                       ),

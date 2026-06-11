@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
+import '../providers/cloud_provider.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -15,6 +16,22 @@ class _AuthScreenState extends State<AuthScreen> {
   final _passwordController = TextEditingController();
   bool _isLogin = true;
   bool _isLoading = false;
+  Map<String, dynamic> _config = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadConfig();
+  }
+
+  Future<void> _loadConfig() async {
+    try {
+      final config = await context.read<CloudProvider>().getAppConfig();
+      if (mounted) setState(() => _config = config);
+    } catch (e) {
+      debugPrint('Error loading app config: $e');
+    }
+  }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
@@ -72,6 +89,14 @@ class _AuthScreenState extends State<AuthScreen> {
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
               ),
+              if (_config['greeting_message'] != null && _config['greeting_message'].isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Text(
+                  _config['greeting_message'],
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 16, color: Colors.blueGrey, fontStyle: FontStyle.italic),
+                ),
+              ],
               const SizedBox(height: 48),
               Form(
                 key: _formKey,
@@ -119,6 +144,19 @@ class _AuthScreenState extends State<AuthScreen> {
                 style: OutlinedButton.styleFrom(padding: const EdgeInsets.all(16)),
                 child: const Text('CONTINUE AS GUEST'),
               ),
+              if (_config['contact_info'] != null && _config['contact_info'].isNotEmpty) ...[
+                const SizedBox(height: 32),
+                Text(
+                  'Support & Contact:',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey[600]),
+                ),
+                Text(
+                  _config['contact_info'],
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+              ],
             ],
           ),
         ),

@@ -28,7 +28,7 @@ class DatabaseService {
     String path = join(await getDatabasesPath(), 'quiz_app.db');
     return await openDatabase(
       path,
-      version: 3,
+      version: 6,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -44,7 +44,9 @@ class DatabaseService {
       CREATE TABLE classes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
-        created_at TEXT
+        created_at TEXT,
+        cloud_bank_id TEXT,
+        cloud_updated_at TEXT
       )
     ''');
     await db.execute('''
@@ -55,6 +57,8 @@ class DatabaseService {
         options TEXT,
         correct_answer TEXT,
         correct_answers TEXT,
+        asked_count INTEGER DEFAULT 0,
+        correct_streak INTEGER DEFAULT 0,
         FOREIGN KEY (class_id) REFERENCES classes (id) ON DELETE CASCADE
       )
     ''');
@@ -69,6 +73,33 @@ class DatabaseService {
     if (oldVersion < 3) {
       await _createHistoryTables(db);
       await _upgradeToV3(db);
+    }
+    if (oldVersion < 4) {
+      try {
+        await db.execute('ALTER TABLE questions ADD COLUMN asked_count INTEGER DEFAULT 0');
+      } catch (e) {}
+    }
+    if (oldVersion < 5) {
+      try {
+        await db.execute('ALTER TABLE classes ADD COLUMN cloud_bank_id TEXT');
+        await db.execute('ALTER TABLE classes ADD COLUMN cloud_updated_at TEXT');
+      } catch (e) {}
+    }
+    if (oldVersion < 6) {
+      try {
+        await db.execute('ALTER TABLE questions ADD COLUMN correct_streak INTEGER DEFAULT 0');
+      } catch (e) {}
+    }
+  }
+
+  // ... (existing methods) ...
+
+  Future<void> updateMastery(int questionId, bool isCorrect) async {
+    final db = await database;
+    if (isCorrect) {
+      await db.rawUpdate('UPDATE questions SET correct_streak = correct_streak + 1 WHERE id = ?', [questionId]);
+    } else {
+      await db.rawUpdate('UPDATE questions SET correct_streak = 0 WHERE id = ?', [questionId]);
     }
   }
 
@@ -110,14 +141,10 @@ class DatabaseService {
   }
 
   Future<void> _upgradeToV3(Database db) async {
-    // Add correct_answers column if it doesn't exist
     try {
       await db.execute('ALTER TABLE questions ADD COLUMN correct_answers TEXT');
-    } catch (e) {
-      // Column might already exist if onCreate was called for v3
-    }
+    } catch (e) {}
 
-    // Migrate existing correct_answer to correct_answers JSON array
     final List<Map<String, dynamic>> questions = await db.query('questions');
     final security = SecurityService();
     
@@ -142,12 +169,19 @@ class DatabaseService {
   }
 
   // Classes methods
-  Future<int> createClass(String name) async {
+  Future<int> createClass(String name, {String? cloudBankId, String? cloudUpdatedAt}) async {
     final db = await database;
     return await db.insert('classes', {
       'name': name,
       'created_at': DateTime.now().toIso8601String(),
+      'cloud_bank_id': cloudBankId,
+      'cloud_updated_at': cloudUpdatedAt,
     });
+  }
+
+  Future<void> updateClassSync(int id, String cloudUpdatedAt) async {
+    final db = await database;
+    await db.update('classes', {'cloud_updated_at': cloudUpdatedAt}, where: 'id = ?', whereArgs: [id]);
   }
 
   Future<List<Map<String, dynamic>>> getClasses() async {
@@ -160,22 +194,17 @@ class DatabaseService {
     await db.delete('classes', where: 'id = ?', whereArgs: [id]);
   }
 
-  // Files methods
-  Future<int> addFile(int classId, String filename) async {
+  Future<void> renameClass(int id, String newName) async {
     final db = await database;
-    return await db.insert('files', {
-      'class_id': classId,
-      'filename': filename,
-      'created_at': DateTime.now().toIso8601String(),
-    });
-  }
-
-  Future<List<Map<String, dynamic>>> getFilesByClass(int classId) async {
-    final db = await database;
-    return await db.query('files', where: 'class_id = ?', whereArgs: [classId], orderBy: 'created_at DESC');
+    await db.update('classes', {'name': newName}, where: 'id = ?', whereArgs: [id]);
   }
 
   // Questions methods
+  Future<void> clearQuestionsForClass(int classId) async {
+    final db = await database;
+    await db.delete('questions', where: 'class_id = ?', whereArgs: [classId]);
+  }
+
   Future<void> insertQuestions(int classId, List<Map<String, dynamic>> questions) async {
     final db = await database;
     final batch = db.batch();
@@ -215,6 +244,15 @@ class DatabaseService {
     await db.delete('questions', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<void> incrementAskedCount(List<int> questionIds) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (var id in questionIds) {
+        await txn.rawUpdate('UPDATE questions SET asked_count = asked_count + 1 WHERE id = ?', [id]);
+      }
+    });
+  }
+
   // History methods
   Future<int> saveQuizHistory(Map<String, dynamic> history) async {
     final db = await database;
@@ -235,7 +273,6 @@ class DatabaseService {
 
   Future<List<Map<String, dynamic>>> getQuizHistory() async {
     final db = await database;
-    // Join with classes to get class name
     return await db.rawQuery('''
       SELECT h.*, c.name as class_name
       FROM quiz_history h
@@ -247,5 +284,20 @@ class DatabaseService {
   Future<List<Map<String, dynamic>>> getHistoryDetails(int historyId) async {
     final db = await database;
     return await db.query('quiz_history_details', where: 'history_id = ?', whereArgs: [historyId]);
+  }
+
+  // Files methods
+  Future<int> addFile(int classId, String filename) async {
+    final db = await database;
+    return await db.insert('files', {
+      'class_id': classId,
+      'filename': filename,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getFilesByClass(int classId) async {
+    final db = await database;
+    return await db.query('files', where: 'class_id = ?', whereArgs: [classId], orderBy: 'created_at DESC');
   }
 }

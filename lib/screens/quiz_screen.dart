@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:confetti/confetti.dart';
+import 'package:vibration/vibration.dart';
 import '../providers/quiz_provider.dart';
+import '../providers/settings_provider.dart';
 import '../widgets/latex_text.dart';
 
 enum QuizScreenState { config, playing, summary }
@@ -14,8 +17,9 @@ class QuizScreen extends StatefulWidget {
 
 class _QuizScreenState extends State<QuizScreen> {
   QuizScreenState _uiState = QuizScreenState.config;
+  late ConfettiController _confettiController;
   
-  // Config state (local to UI until start)
+  // Config state
   int? _selectedClassId;
   final TextEditingController _countController = TextEditingController(text: '10');
   final TextEditingController _minController = TextEditingController(text: '0');
@@ -26,9 +30,16 @@ class _QuizScreenState extends State<QuizScreen> {
   @override
   void initState() {
     super.initState();
+    _confettiController = ConfettiController(duration: const Duration(seconds: 3));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Provider.of<QuizProvider>(context, listen: false).loadClasses();
     });
+  }
+
+  @override
+  void dispose() {
+    _confettiController.dispose();
+    super.dispose();
   }
 
   void _onStartQuiz() async {
@@ -48,8 +59,6 @@ class _QuizScreenState extends State<QuizScreen> {
     }
 
     final provider = context.read<QuizProvider>();
-    
-    // In Speedrun mode, we fetch ALL questions and loop if needed, but for start let's fetch -1
     final fetchCount = _selectedTimerMode == TimerMode.speedRun ? -1 : questionCount;
     final questions = await provider.getQuestions(_selectedClassId!, fetchCount, randomize: _randomize);
 
@@ -86,7 +95,20 @@ class _QuizScreenState extends State<QuizScreen> {
           },
         ),
       ),
-      body: _buildBody(),
+      body: Stack(
+        children: [
+          _buildBody(),
+          Align(
+            alignment: Alignment.topCenter,
+            child: ConfettiWidget(
+              confettiController: _confettiController,
+              blastDirectionality: BlastDirectionality.explosive,
+              shouldLoop: false,
+              colors: const [Colors.green, Colors.blue, Colors.pink, Colors.orange, Colors.purple],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -101,8 +123,8 @@ class _QuizScreenState extends State<QuizScreen> {
           TextButton(
             onPressed: () {
               context.read<QuizProvider>().finishQuiz();
-              Navigator.pop(context); // close dialog
-              Navigator.pop(context); // close screen
+              Navigator.pop(context); 
+              Navigator.pop(context); 
             },
             child: const Text('Exit', style: TextStyle(color: Colors.red)),
           ),
@@ -212,11 +234,15 @@ class _QuizScreenState extends State<QuizScreen> {
   }
 
   Widget _buildQuiz() {
+    final settings = context.read<SettingsProvider>();
     return Consumer<QuizProvider>(
       builder: (context, provider, child) {
         if (!provider.isQuizActive) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             setState(() => _uiState = QuizScreenState.summary);
+            if (settings.enableGamification && provider.score / provider.currentQuestions.length >= 0.8) {
+              _confettiController.play();
+            }
           });
           return const Center(child: CircularProgressIndicator());
         }
@@ -274,7 +300,10 @@ class _QuizScreenState extends State<QuizScreen> {
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 12),
                         child: InkWell(
-                          onTap: provider.isAnswered ? null : () => provider.toggleOption(option),
+                          onTap: provider.isAnswered ? null : () {
+                            provider.toggleOption(option);
+                            if (settings.enableHaptics) Vibration.vibrate(duration: 50);
+                          },
                           child: Container(
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
@@ -302,11 +331,49 @@ class _QuizScreenState extends State<QuizScreen> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: ElevatedButton(
-                onPressed: (provider.isAnswered || provider.userSelection.isEmpty) ? null : () => provider.submitAnswer(),
-                style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 56), backgroundColor: Colors.blue, foregroundColor: Colors.white),
-                child: Text(provider.isAnswered ? 'SUBMITTED' : 'SUBMIT ANSWER', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+              child: Row(
+                children: [
+                  if (provider.currentIndex > 0)
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: provider.isAnswered ? null : () => provider.previousQuestion(),
+                        style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 56)),
+                        child: const Text('PREVIOUS'),
+                      ),
+                    ),
+                  if (provider.currentIndex > 0) const SizedBox(width: 8),
+                  if (provider.timerMode != TimerMode.speedRun)
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: provider.isAnswered ? null : () => provider.skipQuestion(),
+                        style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 56), foregroundColor: Colors.orange),
+                        child: const Text('SKIP'),
+                      ),
+                    ),
+                  if (provider.timerMode != TimerMode.speedRun) const SizedBox(width: 8),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      onPressed: (provider.isAnswered || provider.userSelection.isEmpty) ? null : () {
+                        provider.submitAnswer();
+                        if (settings.enableHaptics) {
+                          final currentQ = provider.currentQuestions[provider.currentIndex];
+                          final List<String> correctAnswers = List<String>.from(currentQ['correct_answers']);
+                          bool correct = provider.userSelection.length == correctAnswers.length &&
+                                         provider.userSelection.every((element) => correctAnswers.contains(element));
+                          if (correct) {
+                            Vibration.vibrate(duration: 100);
+                          } else {
+                            Vibration.vibrate(pattern: [0, 50, 50, 50]);
+                          }
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 56), backgroundColor: Colors.blue, foregroundColor: Colors.white),
+                      child: Text(provider.isAnswered ? 'SUBMITTED' : 'SUBMIT ANSWER', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -419,21 +486,18 @@ class _QuizScreenState extends State<QuizScreen> {
                 }
 
                 if (text.isEmpty || opts.any((o) => o.isEmpty) || selectedAnswers.isEmpty) {
-                  return; // Could show SnackBar but dialog is focused
+                  return; 
                 }
 
                 final provider = context.read<QuizProvider>();
                 try {
-                  // 1. Update DB
                   await provider.updateQuestion(question['id'], text, opts, selectedAnswers);
-                  // 2. Update active quiz memory
                   provider.updateActiveQuestion({
                     'id': question['id'],
                     'question_text': text,
                     'options': opts,
                     'correct_answers': selectedAnswers,
                   });
-                  // 3. Resume
                   if (mounted) {
                     provider.resumeTimer();
                     Navigator.pop(context);

@@ -108,12 +108,29 @@ class QuizProvider with ChangeNotifier {
     }
   }
 
-  Future<void> addClass(String name) async {
+  Future<void> addClass(String name, {String? cloudBankId, String? cloudUpdatedAt}) async {
     try {
-      await _databaseService.createClass(name);
+      await _databaseService.createClass(name, cloudBankId: cloudBankId, cloudUpdatedAt: cloudUpdatedAt);
       await loadClasses();
     } catch (e) {
       debugPrint('Error adding class: $e');
+    }
+  }
+
+  Future<void> updateClassSync(int id, String cloudUpdatedAt) async {
+    try {
+      await _databaseService.updateClassSync(id, cloudUpdatedAt);
+      await loadClasses();
+    } catch (e) {
+      debugPrint('Error updating class sync: $e');
+    }
+  }
+
+  Future<void> clearQuestionsForClass(int id) async {
+    try {
+      await _databaseService.clearQuestionsForClass(id);
+    } catch (e) {
+      debugPrint('Error clearing questions: $e');
     }
   }
 
@@ -123,6 +140,15 @@ class QuizProvider with ChangeNotifier {
       await loadClasses();
     } catch (e) {
       debugPrint('Error removing class: $e');
+    }
+  }
+
+  Future<void> renameClass(int id, String newName) async {
+    try {
+      await _databaseService.renameClass(id, newName);
+      await loadClasses();
+    } catch (e) {
+      debugPrint('Error renaming class: $e');
     }
   }
 
@@ -266,10 +292,15 @@ class QuizProvider with ChangeNotifier {
     try {
       final encryptedQuestions = await _databaseService.getQuestionsByClass(classId);
       List<Map<String, dynamic>> list = List<Map<String, dynamic>>.from(encryptedQuestions);
-      if (randomize) list.shuffle();
-      final selection = (count == -1 || count > list.length) ? list : list.take(count).toList();
+      
+      List<Map<String, dynamic>> selected;
+      if (randomize) {
+        selected = _weightedRandomSelect(list, count);
+      } else {
+        selected = (count == -1 || count > list.length) ? list : list.take(count).toList();
+      }
 
-      return selection.map((q) {
+      return selected.map((q) {
         final decryptedText = _securityService.decryptData(q['question_text']);
         final List<dynamic> encryptedOptions = jsonDecode(q['options']);
         final decryptedOptions = encryptedOptions.map((opt) => _securityService.decryptData(opt.toString())).toList();
@@ -286,12 +317,62 @@ class QuizProvider with ChangeNotifier {
           'question_text': decryptedText,
           'options': decryptedOptions,
           'correct_answers': decryptedCorrectAnswers,
+          'asked_count': q['asked_count'] ?? 0,
+          'correct_streak': q['correct_streak'] ?? 0,
         };
       }).toList();
     } catch (e) {
       debugPrint('Error fetching/decrypting questions: $e');
       return [];
     }
+  }
+
+  List<Map<String, dynamic>> _weightedRandomSelect(List<Map<String, dynamic>> questions, int count) {
+    if (questions.isEmpty) return [];
+    if (count == -1) count = questions.length;
+    if (count >= questions.length) {
+      final list = List<Map<String, dynamic>>.from(questions);
+      list.shuffle();
+      return list;
+    }
+
+    final List<Map<String, dynamic>> pool = List<Map<String, dynamic>>.from(questions);
+    final List<Map<String, dynamic>> result = [];
+
+    // Categorize
+    final List<Map<String, dynamic>> newQ = pool.where((q) => (q['asked_count'] ?? 0) == 0).toList();
+    final List<Map<String, dynamic>> wrongQ = pool.where((q) => (q['asked_count'] ?? 0) > 0 && (q['correct_streak'] ?? 0) < 2).toList();
+    final List<Map<String, dynamic>> rightQ = pool.where((q) => (q['correct_streak'] ?? 0) >= 2).toList();
+
+    for (int i = 0; i < count; i++) {
+      if (pool.isEmpty) break;
+
+      double r = (DateTime.now().microsecondsSinceEpoch % 1000000) / 1000000.0;
+      List<Map<String, dynamic>>? targetList;
+
+      if (newQ.isNotEmpty) {
+        if (r < 0.65 && newQ.isNotEmpty) targetList = newQ;
+        else if (r < 0.90 && wrongQ.isNotEmpty) targetList = wrongQ;
+        else if (rightQ.isNotEmpty) targetList = rightQ;
+      } else {
+        if (r < 0.60 && wrongQ.isNotEmpty) targetList = wrongQ;
+        else if (rightQ.isNotEmpty) targetList = rightQ;
+      }
+
+      targetList ??= pool;
+      
+      if (targetList.isNotEmpty) {
+        targetList.shuffle();
+        final picked = targetList.removeAt(0);
+        result.add(picked);
+        pool.removeWhere((q) => q['id'] == picked['id']);
+        newQ.removeWhere((q) => q['id'] == picked['id']);
+        wrongQ.removeWhere((q) => q['id'] == picked['id']);
+        rightQ.removeWhere((q) => q['id'] == picked['id']);
+      }
+    }
+
+    return result;
   }
 
   // Quiz Engine Implementation
@@ -351,11 +432,13 @@ class QuizProvider with ChangeNotifier {
     final currentQ = _currentQuestions[_currentIndex];
     final List<String> correctAnswers = List<String>.from(currentQ['correct_answers']);
     
-    // Check correctness: exact match of sets
     bool correct = _userSelection.length == correctAnswers.length &&
                    _userSelection.every((element) => correctAnswers.contains(element));
     
     if (correct) _score++;
+
+    // Track mastery streak
+    _databaseService.updateMastery(currentQ['id'], correct);
 
     _quizResults.add({
       'question_id': currentQ['id'],
@@ -365,9 +448,7 @@ class QuizProvider with ChangeNotifier {
 
     notifyListeners();
 
-    // In perQuestion mode, we want a shorter pause before next
     int delay = _secondsRemaining <= 0 ? 500 : 1500;
-    
     Future.delayed(Duration(milliseconds: delay), () {
       if (_isQuizActive) nextQuestion();
     });
@@ -383,19 +464,47 @@ class QuizProvider with ChangeNotifier {
       }
       notifyListeners();
     } else {
-      if (_timerMode == TimerMode.speedRun) {
-        finishQuiz();
-      } else {
-        finishQuiz();
-      }
+      finishQuiz();
     }
+  }
+
+  void previousQuestion() {
+    if (_currentIndex > 0) {
+      _currentIndex--;
+      _isAnswered = false; 
+      _userSelection = []; 
+      notifyListeners();
+    }
+  }
+
+  void skipQuestion() {
+    if (!_isQuizActive || _isAnswered) return;
+    
+    final currentQ = _currentQuestions[_currentIndex];
+    
+    // Reset streak on skip
+    _databaseService.updateMastery(currentQ['id'], false);
+
+    _quizResults.add({
+      'question_id': currentQ['id'],
+      'user_answers': jsonEncode([]),
+      'is_correct': 0,
+    });
+    
+    nextQuestion();
   }
 
   Future<void> finishQuiz() async {
     _quizTimer?.cancel();
     if (!_isQuizActive) return;
     _isQuizActive = false;
+    
     if (_currentQuestions.isNotEmpty) {
+      // 1. Increment asked_count for all questions shown
+      final List<int> shownIds = _currentQuestions.take(_currentIndex + 1).map((q) => q['id'] as int).toList();
+      await _databaseService.incrementAskedCount(shownIds);
+
+      // 2. Save history
       final historyId = await _databaseService.saveQuizHistory({
         'class_id': _activeClassId,
         'score': _score,

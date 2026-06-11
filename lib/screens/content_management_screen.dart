@@ -20,11 +20,18 @@ class ContentManagementScreen extends StatefulWidget {
 
 class _ContentManagementScreenState extends State<ContentManagementScreen> {
   late Future<List<Map<String, dynamic>>> _questionsFuture;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = "";
 
   @override
   void initState() {
     super.initState();
     _refreshQuestions();
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+      });
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<QuizProvider>().loadClassFiles(widget.classId);
     });
@@ -32,7 +39,7 @@ class _ContentManagementScreenState extends State<ContentManagementScreen> {
 
   void _refreshQuestions() {
     setState(() {
-      _questionsFuture = context.read<QuizProvider>().getQuestions(widget.classId, -1);
+      _questionsFuture = context.read<QuizProvider>().getQuestions(widget.classId, -1, randomize: false);
     });
   }
 
@@ -96,82 +103,115 @@ class _ContentManagementScreenState extends State<ContentManagementScreen> {
           return Center(child: Text('Error: ${snapshot.error}'));
         }
 
-        final questions = snapshot.data ?? [];
+        final allQuestions = snapshot.data ?? [];
+        final questions = allQuestions.where((q) {
+          final text = q['question_text'].toString().toLowerCase();
+          return text.contains(_searchQuery);
+        }).toList();
 
-        if (questions.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.question_mark, size: 64, color: Colors.grey[400]),
-                const SizedBox(height: 16),
-                Text('No questions found.', style: TextStyle(color: Colors.grey[600])),
-              ],
-            ),
-          );
-        }
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(8),
-          itemCount: questions.length,
-          itemBuilder: (context, index) {
-            final q = questions[index];
-            return Card(
-              margin: const EdgeInsets.symmetric(vertical: 4),
-              child: ExpansionTile(
-                title: LatexText(
-                  q['question_text'],
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search questions...',
+                  prefixIcon: const Icon(Icons.search),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  filled: true,
+                  fillColor: Colors.grey[100],
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () => _searchController.clear(),
+                        )
+                      : null,
                 ),
-                subtitle: Text('Answers: ${(q['correct_answers'] as List).join(', ')}'),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Options:', style: TextStyle(fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 8),
-                        ...(q['options'] as List<dynamic>).map((opt) {
-                          final bool isCorrect = (q['correct_answers'] as List).contains(opt.toString());
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Row(
+              ),
+            ),
+            if (questions.isEmpty)
+              Expanded(
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.search_off, size: 64, color: Colors.grey[400]),
+                      const SizedBox(height: 16),
+                      Text(
+                        _searchQuery.isEmpty ? 'No questions found.' : 'No matches for "$_searchQuery"',
+                        style: TextStyle(color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(8),
+                  itemCount: questions.length,
+                  itemBuilder: (context, index) {
+                    final q = questions[index];
+                    return Card(
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      child: ExpansionTile(
+                        title: LatexText(
+                          q['question_text'],
+                        ),
+                        subtitle: Text('Answers: ${(q['correct_answers'] as List).join(', ')}'),
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(
-                                  isCorrect ? Icons.check_circle : Icons.circle_outlined,
-                                  size: 16,
-                                  color: isCorrect ? Colors.green : Colors.grey,
+                                const Text('Options:', style: TextStyle(fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 8),
+                                ...(q['options'] as List<dynamic>).map((opt) {
+                                  final bool isCorrect = (q['correct_answers'] as List).contains(opt.toString());
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 4),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          isCorrect ? Icons.check_circle : Icons.circle_outlined,
+                                          size: 16,
+                                          color: isCorrect ? Colors.green : Colors.grey,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(child: LatexText(opt.toString())),
+                                      ],
+                                    ),
+                                  );
+                                }),
+                                const Divider(height: 24),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    TextButton.icon(
+                                      onPressed: () => _showEditQuestionDialog(question: q),
+                                      icon: const Icon(Icons.edit),
+                                      label: const Text('Edit'),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    TextButton.icon(
+                                      onPressed: () => _confirmDeleteQuestion(q['id']),
+                                      icon: const Icon(Icons.delete, color: Colors.red),
+                                      label: const Text('Delete', style: TextStyle(color: Colors.red)),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(width: 8),
-                                Expanded(child: LatexText(opt.toString())),
                               ],
                             ),
-                          );
-                        }),
-                        const Divider(height: 24),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            TextButton.icon(
-                              onPressed: () => _showEditQuestionDialog(question: q),
-                              icon: const Icon(Icons.edit),
-                              label: const Text('Edit'),
-                            ),
-                            const SizedBox(width: 8),
-                            TextButton.icon(
-                              onPressed: () => _confirmDeleteQuestion(q['id']),
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              label: const Text('Delete', style: TextStyle(color: Colors.red)),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
               ),
-            );
-          },
+          ],
         );
       },
     );

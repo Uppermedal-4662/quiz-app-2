@@ -128,7 +128,24 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> signUp(String email, String password) async {
-    await _auth.createUserWithEmailAndPassword(email: email, password: password);
+    final credential = await _auth.createUserWithEmailAndPassword(email: email, password: password);
+    if (credential.user != null) {
+      await credential.user!.sendEmailVerification();
+    }
+  }
+
+  Future<void> reloadUser() async {
+    if (_user != null) {
+      await _user!.reload();
+      _user = _auth.currentUser;
+      notifyListeners();
+    }
+  }
+
+  Future<void> sendVerificationEmail() async {
+    if (_user != null) {
+      await _user!.sendEmailVerification();
+    }
   }
 
   Future<void> signOut() async {
