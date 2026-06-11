@@ -1,10 +1,82 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:tutorial_coach_mark/tutorial_coach_mark.dart';
 import '../providers/cloud_provider.dart';
 import '../services/auth_service.dart';
+import '../services/tutorial_service.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final GlobalKey _storeKey = GlobalKey();
+  final GlobalKey _quizKey = GlobalKey();
+  final GlobalKey _classKey = GlobalKey();
+  final GlobalKey _supportKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkFirstRun());
+  }
+
+  Future<void> _checkFirstRun() async {
+    final prefs = await SharedPreferences.getInstance();
+    final bool hasSeenTutorial = prefs.getBool('has_seen_tutorial_v2') ?? false;
+    
+    if (!hasSeenTutorial) {
+      _showTutorial();
+    }
+  }
+
+  void _showTutorial() {
+    final auth = context.read<AuthService>();
+    final List<TargetFocus> targets = [
+      if (!auth.isGuest)
+        TutorialService.createTarget(
+          key: _storeKey,
+          identify: "store",
+          title: "Question Store",
+          content: "Tap here to browse and download professional question banks from our cloud store.",
+          align: ContentAlign.bottom,
+        ),
+      TutorialService.createTarget(
+        key: _classKey,
+        identify: "classes",
+        title: "Manage Classes",
+        content: "Create your own local categories, rename classes, and upload your personal PDFs for AI extraction.",
+        align: ContentAlign.top,
+      ),
+      TutorialService.createTarget(
+        key: _quizKey,
+        identify: "quiz",
+        title: "Start a Quiz",
+        content: "Ready to test yourself? Use our sample data or your own to start a highly adaptive quiz session.",
+        align: ContentAlign.top,
+      ),
+      TutorialService.createTarget(
+        key: _supportKey,
+        identify: "support",
+        title: "Need Help?",
+        content: "You can contact the administrator directly from here if you have any questions or find errors.",
+        align: ContentAlign.bottom,
+      ),
+    ];
+
+    TutorialService.showOnboarding(
+      context: context,
+      targets: targets,
+      onFinish: () async {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('has_seen_tutorial_v2', true);
+      },
+    );
+  }
 
   void _showContactDialog(BuildContext context) {
     final auth = context.read<AuthService>();
@@ -37,12 +109,12 @@ class HomeScreen extends StatelessWidget {
               if (controller.text.trim().isEmpty) return;
               try {
                 await context.read<CloudProvider>().sendMessageToAdmin(auth.user!.uid, auth.user!.email!, controller.text.trim());
-                if (context.mounted) {
+                if (mounted) {
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Message sent!')));
                 }
               } catch (e) {
-                if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
               }
             },
             child: const Text('Send'),
@@ -54,11 +126,14 @@ class HomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthService>();
+    
     return Scaffold(
       appBar: AppBar(
         title: const Text('Quiz AI'),
         actions: [
           IconButton(
+            key: _supportKey,
             onPressed: () => _showContactDialog(context),
             icon: const Icon(Icons.contact_support),
             tooltip: 'Contact Admin',
@@ -76,13 +151,10 @@ class HomeScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(
-                Icons.quiz,
-                size: 100,
-                color: Colors.blue,
-              ),
+              const Icon(Icons.quiz, size: 100, color: Colors.blue),
               const SizedBox(height: 48),
               ElevatedButton.icon(
+                key: _quizKey,
                 onPressed: () => Navigator.pushNamed(context, '/quiz'),
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('Start Quiz'),
@@ -92,6 +164,18 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
+              if (!auth.isGuest)
+                OutlinedButton.icon(
+                  key: _storeKey,
+                  onPressed: () => Navigator.pushNamed(context, '/store'),
+                  icon: const Icon(Icons.cloud_download),
+                  label: const Text('Question Store'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    textStyle: const TextStyle(fontSize: 18),
+                  ),
+                ),
+              if (!auth.isGuest) const SizedBox(height: 16),
               OutlinedButton.icon(
                 onPressed: () => Navigator.pushNamed(context, '/history'),
                 icon: const Icon(Icons.history),
@@ -103,6 +187,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               OutlinedButton.icon(
+                key: _classKey,
                 onPressed: () => Navigator.pushNamed(context, '/classes'),
                 icon: const Icon(Icons.class_),
                 label: const Text('Manage Classes'),

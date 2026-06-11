@@ -45,6 +45,15 @@ class SettingsScreen extends StatelessWidget {
                 value: settings.enableTTS,
                 onChanged: (v) => settings.setTTS(v),
               ),
+              const Divider(),
+              const _SectionHeader('AI & Models'),
+              ListTile(
+                title: const Text('Gemini AI Configuration'),
+                subtitle: const Text('Set API Key and Model preferences'),
+                leading: const Icon(Icons.psychology),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.pushNamed(context, '/config'),
+              ),
               const Divider(height: 48),
               Center(
                 child: TextButton.icon(

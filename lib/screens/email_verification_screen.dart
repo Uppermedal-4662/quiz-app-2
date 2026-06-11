@@ -22,6 +22,12 @@ class EmailVerificationScreen extends StatelessWidget {
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 18),
             ),
+            const SizedBox(height: 16),
+            const Text(
+              "Please check your Spam or Junk folder for our verification email. Mark it as 'Not Spam' to continue.",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: Colors.grey),
+            ),
             const SizedBox(height: 48),
             ElevatedButton(
               onPressed: () => context.read<AuthService>().reloadUser(),

@@ -317,7 +317,7 @@ class _QuizScreenState extends State<QuizScreen> {
                                   ? Icon(isSelected ? Icons.check_box : Icons.check_box_outline_blank, color: isSelected ? Colors.blue : Colors.grey)
                                   : Icon(isSelected ? Icons.radio_button_checked : Icons.radio_button_off, color: isSelected ? Colors.blue : Colors.grey),
                                 const SizedBox(width: 12),
-                                Expanded(child: LatexText(option, style: const TextStyle(fontSize: 16))),
+                                Expanded(child: LatexText(option, style: const TextStyle(fontSize: 16), showTTS: false)),
                                 if (provider.isAnswered && isCorrect) const Icon(Icons.check_circle, color: Colors.green),
                                 if (provider.isAnswered && !isCorrect && isSelected) const Icon(Icons.cancel, color: Colors.red),
                               ],

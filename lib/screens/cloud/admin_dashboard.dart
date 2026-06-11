@@ -9,6 +9,7 @@ import '../../providers/cloud_provider.dart';
 import '../../providers/quiz_provider.dart';
 import '../../services/auth_service.dart';
 import 'cloud_manual_import_screen.dart';
+import 'cloud_bank_management_screen.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -37,7 +38,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
         _banksFuture = context.read<CloudProvider>().getMyBanks(uid);
       });
 
-      // Check if this admin has inbox permission
       final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
       if (mounted) {
         setState(() => _canViewInbox = doc.data()?['can_view_inbox'] ?? false);
@@ -48,6 +48,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Future<void> _createBank() async {
     final nameController = TextEditingController();
     final descController = TextEditingController();
+    final catController = TextEditingController(text: 'General');
     
     final result = await showDialog<bool>(
       context: context,
@@ -58,6 +59,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           children: [
             TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Bank Name')),
             TextField(controller: descController, decoration: const InputDecoration(labelText: 'Description')),
+            TextField(controller: catController, decoration: const InputDecoration(labelText: 'Category (e.g. Maths)')),
           ],
         ),
         actions: [
@@ -70,7 +72,27 @@ class _AdminDashboardState extends State<AdminDashboard> {
     if (result == true && nameController.text.isNotEmpty) {
       final cloud = context.read<CloudProvider>();
       final auth = context.read<AuthService>();
-      await cloud.createQuestionBank(nameController.text, descController.text, auth.user!.uid);
+      await cloud.createQuestionBank(nameController.text, descController.text, catController.text, auth.user!.uid);
+      _refresh();
+    }
+  }
+
+  Future<void> _renameBank(Map<String, dynamic> bank) async {
+    final controller = TextEditingController(text: bank['name']);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename Bank'),
+        content: TextField(controller: controller, autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text('Rename')),
+        ],
+      ),
+    );
+
+    if (newName != null && newName.isNotEmpty && newName != bank['name']) {
+      await context.read<CloudProvider>().updateQuestionBank(bank['bank_id'], {'name': newName});
       _refresh();
     }
   }
@@ -78,14 +100,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Future<void> _pickAndUploadPdf(String bankId) async {
     final result = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
     if (result != null) {
-      Uint8List bytes;
-      if (result.files.single.bytes != null) {
-        bytes = result.files.single.bytes!;
-      } else {
-        final file = File(result.files.single.path!);
-        bytes = await file.readAsBytes();
-      }
-      
+      final Uint8List bytes = result.files.single.bytes ?? await File(result.files.single.path!).readAsBytes();
       final quizProvider = context.read<QuizProvider>();
       final cloud = context.read<CloudProvider>();
 
@@ -198,11 +213,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 return Card(
                   margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: ListTile(
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => CloudBankManagementScreen(bankId: bank['bank_id'], bankName: bank['name']))).then((_) => _refresh()),
                     title: Text(bank['name']),
-                    subtitle: Text(bank['description'] ?? ''),
+                    subtitle: Text('${bank['category'] ?? 'Uncategorized'} | ${bank['description'] ?? ''}'),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit, size: 20),
+                          onPressed: () => _renameBank(bank),
+                          tooltip: 'Rename Bank',
+                        ),
                         IconButton(
                           icon: const Icon(Icons.edit_note),
                           onPressed: _isProcessing

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/database_service.dart';
 import '../services/gemini_service.dart';
 import '../services/security_service.dart';
@@ -33,7 +34,9 @@ class QuizProvider with ChangeNotifier {
   bool _isAnswered = false;
   List<String> _userSelection = [];
   int _totalTimeSpent = 0;
-  List<Map<String, dynamic>> _quizResults = []; 
+  
+  // Anti-Cheat: Track per-question results in real-time
+  List<Map<String, dynamic>?> _sessionResults = [];
   int _activeClassId = 0;
 
   List<Map<String, dynamic>> get classes => _classes;
@@ -99,6 +102,7 @@ class QuizProvider with ChangeNotifier {
     _isLoading = true;
     notifyListeners();
     try {
+      await _initSampleDataIfNeeded();
       _classes = await _databaseService.getClasses();
     } catch (e) {
       debugPrint('Error loading classes: $e');
@@ -106,6 +110,42 @@ class QuizProvider with ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> _initSampleDataIfNeeded() async {
+    final prefs = await SharedPreferences.getInstance();
+    final bool hasRunBefore = prefs.getBool('has_run_v6') ?? false;
+    
+    if (hasRunBefore) return;
+
+    final existing = await _databaseService.getClasses();
+    if (existing.any((c) => c['name'] == 'Sample Math Class')) return;
+
+    // Create Sample Class
+    final id = await _databaseService.createClass('Sample Math Class');
+    
+    // Sample Questions
+    final sampleQuestions = [
+      {
+        'question_text': r'What is $\sqrt{144}$?',
+        'options': ['10', '12', '14', '16'],
+        'correct_answers': ['12'],
+      },
+      {
+        'question_text': 'Which of these are prime numbers?',
+        'options': ['2', '4', '9', '11'],
+        'correct_answers': ['2', '11'],
+      },
+      {
+        'question_text': r'Solve: $2x + 5 = 11$. What is $x$?',
+        'options': ['2', '3', '4', '6'],
+        'correct_answers': ['3'],
+      }
+    ];
+
+
+    await _processAndSaveQuestions(id, sampleQuestions);
+    await prefs.setBool('has_run_v6', true);
   }
 
   Future<void> addClass(String name, {String? cloudBankId, String? cloudUpdatedAt}) async {
@@ -393,7 +433,7 @@ class QuizProvider with ChangeNotifier {
     _isAnswered = false;
     _userSelection = [];
     _totalTimeSpent = 0;
-    _quizResults = [];
+    _sessionResults = List.filled(questions.length, null); // Reset session state
     _startTimer();
     notifyListeners();
   }
@@ -440,11 +480,12 @@ class QuizProvider with ChangeNotifier {
     // Track mastery streak
     _databaseService.updateMastery(currentQ['id'], correct);
 
-    _quizResults.add({
+    // Persist result in session state
+    _sessionResults[_currentIndex] = {
       'question_id': currentQ['id'],
       'user_answers': jsonEncode(_userSelection),
       'is_correct': correct ? 1 : 0,
-    });
+    };
 
     notifyListeners();
 
@@ -457,9 +498,8 @@ class QuizProvider with ChangeNotifier {
   void nextQuestion() {
     if (_currentIndex < _currentQuestions.length - 1) {
       _currentIndex++;
-      _isAnswered = false;
-      _userSelection = [];
-      if (_timerMode == TimerMode.perQuestion) {
+      _restoreStateForCurrentIndex();
+      if (_timerMode == TimerMode.perQuestion && !_isAnswered) {
         _secondsRemaining = _originalLimit;
       }
       notifyListeners();
@@ -471,8 +511,7 @@ class QuizProvider with ChangeNotifier {
   void previousQuestion() {
     if (_currentIndex > 0) {
       _currentIndex--;
-      _isAnswered = false; 
-      _userSelection = []; 
+      _restoreStateForCurrentIndex();
       notifyListeners();
     }
   }
@@ -481,17 +520,26 @@ class QuizProvider with ChangeNotifier {
     if (!_isQuizActive || _isAnswered) return;
     
     final currentQ = _currentQuestions[_currentIndex];
-    
-    // Reset streak on skip
     _databaseService.updateMastery(currentQ['id'], false);
 
-    _quizResults.add({
+    _sessionResults[_currentIndex] = {
       'question_id': currentQ['id'],
       'user_answers': jsonEncode([]),
       'is_correct': 0,
-    });
+    };
     
     nextQuestion();
+  }
+
+  void _restoreStateForCurrentIndex() {
+    final saved = _sessionResults[_currentIndex];
+    if (saved != null) {
+      _isAnswered = true;
+      _userSelection = List<String>.from(jsonDecode(saved['user_answers']));
+    } else {
+      _isAnswered = false;
+      _userSelection = [];
+    }
   }
 
   Future<void> finishQuiz() async {
@@ -504,7 +552,7 @@ class QuizProvider with ChangeNotifier {
       final List<int> shownIds = _currentQuestions.take(_currentIndex + 1).map((q) => q['id'] as int).toList();
       await _databaseService.incrementAskedCount(shownIds);
 
-      // 2. Save history
+      // 2. Save history using the session results (including skips)
       final historyId = await _databaseService.saveQuizHistory({
         'class_id': _activeClassId,
         'score': _score,
@@ -513,7 +561,9 @@ class QuizProvider with ChangeNotifier {
         'quiz_type': _timerMode.toString(),
         'date_taken': DateTime.now().toIso8601String(),
       });
-      await _databaseService.saveQuizHistoryDetails(historyId, _quizResults);
+      
+      final validDetails = _sessionResults.where((r) => r != null).cast<Map<String, dynamic>>().toList();
+      await _databaseService.saveQuizHistoryDetails(historyId, validDetails);
     }
     notifyListeners();
   }

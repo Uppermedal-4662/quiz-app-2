@@ -8,6 +8,13 @@ class GeminiService {
   factory GeminiService() => _instance;
   GeminiService._internal();
 
+  // Robust Model Rotation List
+  static const List<String> _modelRotation = [
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+    'gemini-1.0-pro',
+  ];
+
   Future<List<String>> listAvailableModels(String apiKey) async {
     final url = Uri.parse('https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey');
     try {
@@ -30,7 +37,147 @@ class GeminiService {
     }
   }
 
-  /// Original extraction method (single pass)
+  /// NEW: Robust extraction with auto-model switching and per-section processing
+  Future<List<Map<String, dynamic>>> extractQuestionsFromPdfChunked(
+    Uint8List pdfBytes,
+    String apiKey,
+    String modelName, {
+    required Function(String) onProgress,
+    Uint8List? answerKeyBytes,
+    bool aiSolve = false,
+  }) async {
+    final List<Map<String, dynamic>> allQuestions = [];
+    
+    // We break the process into 5 granular sections for better reliability (simulating per-page)
+    const int sections = 5;
+    
+    for (int i = 1; i <= sections; i++) {
+      int retryCount = 0;
+      bool success = false;
+      String currentModel = modelName;
+
+      while (retryCount < 5 && !success) {
+        try {
+          onProgress("Processing Section $i of $sections (Attempt ${retryCount + 1})...");
+          
+          final model = GenerativeModel(
+            model: currentModel,
+            apiKey: apiKey,
+            generationConfig: GenerationConfig(responseMimeType: 'application/json'),
+          );
+
+          String sectionContext = _getSectionPrompt(i, sections);
+          String scenarioPrompt = _getScenarioPrompt(answerKeyBytes != null, aiSolve);
+
+          List<Part> contentParts = [
+            DataPart('application/pdf', pdfBytes),
+          ];
+
+          if (answerKeyBytes != null) {
+            contentParts.add(TextPart("Answer Key Document:"));
+            contentParts.add(DataPart('application/pdf', answerKeyBytes));
+          }
+
+          final fullPrompt = '''
+$scenarioPrompt
+$sectionContext
+
+STRICT JSON COMPLIANCE:
+1. Return ONLY a valid JSON array of objects.
+2. Escape double quotes (") as \\" inside text.
+3. Use LaTeX for math (wrap in \$).
+4. 'question_text', 'options' (list), 'correct_answers' (list).
+
+Return ONLY the array.
+''';
+
+          contentParts.insert(0, TextPart(fullPrompt));
+          final response = await model.generateContent([Content.multi(contentParts)]);
+          final responseText = response.text;
+
+          if (responseText != null && responseText.isNotEmpty) {
+            final List<Map<String, dynamic>> chunkQuestions = _parseJson(responseText);
+            
+            // Deduplicate and merge
+            for (var q in chunkQuestions) {
+              if (q.containsKey('question_text') && q.containsKey('options')) {
+                if (!allQuestions.any((existing) => 
+                    existing['question_text'].trim().toLowerCase() == q['question_text'].trim().toLowerCase())) {
+                  allQuestions.add(q);
+                }
+              }
+            }
+            success = true;
+          } else {
+            throw Exception("Empty response from AI");
+          }
+        } catch (e) {
+          retryCount++;
+          if (retryCount < 5) {
+            // AUTO MODEL SWITCHING
+            // If flash fails, try pro, etc.
+            int nextModelIndex = (retryCount) % _modelRotation.length;
+            currentModel = _modelRotation[nextModelIndex];
+            onProgress("Demand spike or error detected. Switching to $currentModel...");
+            await Future.delayed(Duration(seconds: 2 * retryCount)); // Exponential backoff
+          } else {
+            onProgress("Critical: AI services are currently overwhelmed. Showing partial results.");
+          }
+        }
+      }
+    }
+
+    if (allQuestions.isEmpty) {
+      throw Exception('Failed to extract questions after 5 attempts. The model might be under high demand.');
+    }
+
+    return allQuestions;
+  }
+
+  String _getSectionPrompt(int index, int total) {
+    if (total == 1) return "Extract ALL questions from the document.";
+    
+    double startPct = ((index - 1) / total) * 100;
+    double endPct = (index / total) * 100;
+    
+    return "Focus your extraction strictly on the content located between ${startPct.toInt()}% and ${endPct.toInt()}% of the document's total length. Ensure you do not skip questions in this specific range.";
+  }
+
+  String _getScenarioPrompt(bool hasAnswerKey, bool aiSolve) {
+    if (hasAnswerKey) {
+      return "Extract questions from the first document and find their correct answers in the second Answer Key document.";
+    } else if (aiSolve) {
+      return "Extract questions from the document and solve them using your internal knowledge to determine the correct answers.";
+    } else {
+      return "Extract questions and their corresponding correct answers provided within the document itself.";
+    }
+  }
+
+  List<Map<String, dynamic>> _parseJson(String text) {
+    String cleaned = text.trim();
+    try {
+      if (cleaned.contains('```')) {
+        final start = cleaned.indexOf('[');
+        final end = cleaned.lastIndexOf(']');
+        if (start != -1 && end != -1 && end > start) {
+          cleaned = cleaned.substring(start, end + 1);
+        }
+      }
+      return (jsonDecode(cleaned) as List).cast<Map<String, dynamic>>();
+    } catch (e) {
+      // Recovery logic
+      final start = cleaned.indexOf('[');
+      final end = cleaned.lastIndexOf(']');
+      if (start != -1 && end != -1 && end > start) {
+        try {
+          return (jsonDecode(cleaned.substring(start, end + 1)) as List).cast<Map<String, dynamic>>();
+        } catch (_) {}
+      }
+      return [];
+    }
+  }
+
+  /// Backward compatibility
   Future<List<Map<String, dynamic>>> extractQuestionsFromPdf(
     Uint8List pdfBytes,
     String apiKey,
@@ -42,146 +189,9 @@ class GeminiService {
       pdfBytes, 
       apiKey, 
       modelName, 
-      onProgress: (_) {}, // No-op progress for backward compatibility
+      onProgress: (_) {},
       answerKeyBytes: answerKeyBytes,
       aiSolve: aiSolve
     );
-  }
-
-  /// NEW: Chunked extraction logic to handle large PDFs and avoid timeouts.
-  Future<List<Map<String, dynamic>>> extractQuestionsFromPdfChunked(
-    Uint8List pdfBytes,
-    String apiKey,
-    String modelName, {
-    required Function(String) onProgress,
-    Uint8List? answerKeyBytes,
-    bool aiSolve = false,
-    int chunkCount = 3, // Logic: we try to process the PDF in 3 conceptual passes
-  }) async {
-    try {
-      final model = GenerativeModel(
-        model: modelName,
-        apiKey: apiKey,
-        generationConfig: GenerationConfig(responseMimeType: 'application/json'),
-      );
-
-      final List<Map<String, dynamic>> allQuestions = [];
-      
-      // We perform multiple passes to ensure we get ALL questions 
-      // without hitting response token limits.
-      for (int i = 1; i <= chunkCount; i++) {
-        onProgress("Processing part $i of $chunkCount...");
-
-        String rangePrompt = "";
-        if (chunkCount > 1) {
-          if (i == 1) rangePrompt = "Focus on the START and early sections of the document.";
-          else if (i == chunkCount) rangePrompt = "Focus on the END and final sections of the document.";
-          else rangePrompt = "Focus on the MIDDLE sections of the document.";
-        }
-
-        List<Part> contentParts = [];
-        String scenarioPrompt = _getScenarioPrompt(answerKeyBytes != null, aiSolve);
-        
-        contentParts.add(DataPart('application/pdf', pdfBytes));
-        if (answerKeyBytes != null) {
-          contentParts.add(TextPart("Answer Key PDF:"));
-          contentParts.add(DataPart('application/pdf', answerKeyBytes));
-        }
-
-        final fullPrompt = '''
-$scenarioPrompt
-$rangePrompt
-
-STRICT JSON COMPLIANCE REQUIREMENTS:
-1. Return ONLY a valid JSON array of objects.
-2. Inside strings (question_text and options), you MUST escape every double quote symbol (") as \\" to prevent breaking the JSON format.
-3. For LaTeX math symbols, wrap them in single dollar signs (e.g. \$x^2\$). Ensure backslashes in LaTeX are preserved.
-4. 'options': Provide a list of all possible answers.
-5. 'correct_answers': A list of all correct answer strings exactly as they appear in 'options'.
-
-Example structure:
-[
-  {
-    "question_text": "The value of \\"x\\" in \$x + 2 = 4\$ is:",
-    "options": ["1", "2", "3", "4"],
-    "correct_answers": ["2"]
-  }
-]
-''';
-
-        contentParts.insert(0, TextPart(fullPrompt));
-        final response = await model.generateContent([Content.multi(contentParts)]);
-        final responseText = response.text;
-
-        if (responseText != null && responseText.isNotEmpty) {
-          final List<Map<String, dynamic>> chunkQuestions = _parseJson(responseText);
-          // Deduplicate based on question text
-          for (var q in chunkQuestions) {
-            if (q.containsKey('question_text') && q.containsKey('options')) {
-              if (!allQuestions.any((existing) => 
-                  existing['question_text'] == q['question_text'])) {
-                allQuestions.add(q);
-              }
-            }
-          }
-        }
-      }
-
-      if (allQuestions.isEmpty) {
-        throw Exception('No valid questions were found. The AI might be having trouble with this specific document format.');
-      }
-
-      return allQuestions;
-    } catch (e) {
-      throw Exception('Failed to extract questions: $e');
-    }
-  }
-
-  String _getScenarioPrompt(bool hasAnswerKey, bool aiSolve) {
-    if (hasAnswerKey) {
-      return "Extract questions from the first PDF and match them with correct answers from the second PDF.";
-    } else if (aiSolve) {
-      return "Extract questions from the PDF and solve them yourself to find the correct answer.";
-    } else {
-      return "Extract questions and their corresponding correct answers from the attached PDF. The key is usually at the end.";
-    }
-  }
-
-  List<Map<String, dynamic>> _parseJson(String text) {
-    String cleaned = text.trim();
-    try {
-      // 1. Remove Markdown markers
-      if (cleaned.contains('```')) {
-        final start = cleaned.indexOf('[');
-        final end = cleaned.lastIndexOf(']');
-        if (start != -1 && end != -1 && end > start) {
-          cleaned = cleaned.substring(start, end + 1);
-        }
-      }
-
-      // 2. Pre-processing: Fix common AI mistakes with nested quotes
-      // This is a heuristic: try to find unescaped quotes between property names
-      // However, jsonDecode is strict. Let's try standard decode first.
-      return (jsonDecode(cleaned) as List).cast<Map<String, dynamic>>();
-    } catch (e) {
-      print('Standard JSON parsing failed, attempting recovery...');
-      try {
-        // Recovery attempt: If the AI failed to escape some quotes, 
-        // this regex-based approach might help, though it's risky.
-        // For now, let's just log the error and try a more targeted fix if common patterns emerge.
-        print('Raw faulty JSON: $cleaned');
-        
-        // Sometimes AI adds text before/after the array even without backticks
-        final start = cleaned.indexOf('[');
-        final end = cleaned.lastIndexOf(']');
-        if (start != -1 && end != -1 && end > start) {
-          final subCleaned = cleaned.substring(start, end + 1);
-          return (jsonDecode(subCleaned) as List).cast<Map<String, dynamic>>();
-        }
-      } catch (inner) {
-        print('JSON Recovery failed: $inner');
-      }
-      return [];
-    }
   }
 }
