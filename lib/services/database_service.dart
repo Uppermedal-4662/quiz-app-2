@@ -245,6 +245,21 @@ class DatabaseService {
     await db.delete('questions', where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<void> updateMastery(int questionId, bool correct) async {
+    final db = await database;
+    if (correct) {
+      await db.rawUpdate(
+        'UPDATE questions SET correct_streak = correct_streak + 1 WHERE id = ?',
+        [questionId],
+      );
+    } else {
+      await db.rawUpdate(
+        'UPDATE questions SET correct_streak = 0 WHERE id = ?',
+        [questionId],
+      );
+    }
+  }
+
   Future<void> incrementAskedCount(List<int> questionIds) async {
     final db = await database;
     await db.transaction((txn) async {
