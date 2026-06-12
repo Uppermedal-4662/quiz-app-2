@@ -561,6 +561,8 @@ class QuizProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  DateTime? _lastNavigation;
+
   void submitAnswer() {
     if (_isAnswered || !_isQuizActive) return;
     _isAnswered = true;
@@ -585,13 +587,25 @@ class QuizProvider with ChangeNotifier {
     _saveSessionToPrefs();
     notifyListeners();
 
-    int delay = _secondsRemaining <= 0 ? 500 : 1500;
-    Future.delayed(Duration(milliseconds: delay), () {
-      if (_isQuizActive) nextQuestion();
+    // Auto-advance after 2 seconds
+    Future.delayed(const Duration(seconds: 2), () {
+      // Only auto-advance if the quiz is still active and the user is still on this question
+      if (_isQuizActive && _currentIndex == _currentQuestions.indexOf(currentQ)) {
+        nextQuestion();
+      }
     });
   }
 
   void nextQuestion() {
+    if (!_isQuizActive) return;
+    
+    // Throttle to prevent skipping questions on double-tap
+    final now = DateTime.now();
+    if (_lastNavigation != null && now.difference(_lastNavigation!) < const Duration(milliseconds: 500)) {
+      return;
+    }
+    _lastNavigation = now;
+
     if (_currentIndex < _currentQuestions.length - 1) {
       _currentIndex++;
       _restoreStateForCurrentIndex();
@@ -606,6 +620,14 @@ class QuizProvider with ChangeNotifier {
   }
 
   void previousQuestion() {
+    if (!_isQuizActive) return;
+
+    final now = DateTime.now();
+    if (_lastNavigation != null && now.difference(_lastNavigation!) < const Duration(milliseconds: 500)) {
+      return;
+    }
+    _lastNavigation = now;
+
     if (_currentIndex > 0) {
       _currentIndex--;
       _restoreStateForCurrentIndex();
