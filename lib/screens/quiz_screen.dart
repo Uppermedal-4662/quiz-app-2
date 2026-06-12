@@ -252,134 +252,179 @@ class _QuizScreenState extends State<QuizScreen> {
         final correctAnswers = List<String>.from(question['correct_answers']);
         final isMulti = correctAnswers.length > 1;
 
-        return Column(
-          children: [
-            LinearProgressIndicator(value: (provider.currentIndex + 1) / provider.currentQuestions.length),
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Q ${provider.currentIndex + 1}/${provider.currentQuestions.length}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                  if (provider.timerMode != TimerMode.none)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                      decoration: BoxDecoration(color: provider.secondsRemaining < 10 ? Colors.red.shade100 : Colors.blue.shade100, borderRadius: BorderRadius.circular(12)),
-                      child: Text('${provider.secondsRemaining}s', style: TextStyle(fontWeight: FontWeight.bold, color: provider.secondsRemaining < 10 ? Colors.red : Colors.blue.shade900)),
-                    ),
-                  IconButton(
-                    icon: const Icon(Icons.edit_note, color: Colors.orange),
-                    tooltip: 'Fix Question Error',
-                    onPressed: () {
-                      provider.pauseTimer();
-                      _showInQuizEditDialog(question);
-                    },
-                  ),
-                ],
-              ),
+        return CallbackShortcuts(
+          bindings: <ShortcutActivator, VoidCallback>{
+            const SingleActivator(LogicalKeyboardKey.enter): () {
+              if (provider.isAnswered) {
+                provider.nextQuestion();
+              } else if (provider.userSelection.isNotEmpty) {
+                _submitAnswer(provider, settings);
+              }
+            },
+            const SingleActivator(LogicalKeyboardKey.backspace): () {
+              if (provider.currentIndex > 0) provider.previousQuestion();
+            },
+            ...Map.fromIterable(
+              Iterable.generate(options.length),
+              key: (i) => SingleActivator(LogicalKeyboardKey.values.firstWhere((k) => k.debugName == 'Digit ${i + 1}')),
+              value: (i) => () {
+                if (!provider.isAnswered) {
+                  provider.toggleOption(options[i]);
+                  if (settings.enableHaptics) Vibration.vibrate(duration: 50);
+                }
+              },
             ),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    LatexText(question['question_text'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
-                    if (isMulti) const Padding(padding: EdgeInsets.only(top: 8), child: Text('(Select all correct options)', style: TextStyle(color: Colors.grey, fontSize: 12))),
-                    const SizedBox(height: 32),
-                    ...options.map((option) {
-                      bool isSelected = provider.userSelection.contains(option);
-                      bool isCorrect = correctAnswers.contains(option);
-                      Color? tileColor;
-                      
-                      if (provider.isAnswered) {
-                        if (isCorrect) tileColor = Colors.green.shade100;
-                        else if (isSelected) tileColor = Colors.red.shade100;
-                      }
+          },
+          child: Focus(
+            autofocus: true,
+            child: Column(
+              children: [
+                LinearProgressIndicator(value: (provider.currentIndex + 1) / provider.currentQuestions.length),
+                // ... rest of the original Column children ...
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Q ${provider.currentIndex + 1}/${provider.currentQuestions.length}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      if (provider.timerMode != TimerMode.none)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          decoration: BoxDecoration(color: provider.secondsRemaining < 10 ? Colors.red.shade100 : Colors.blue.shade100, borderRadius: BorderRadius.circular(12)),
+                          child: Text('${provider.secondsRemaining}s', style: TextStyle(fontWeight: FontWeight.bold, color: provider.secondsRemaining < 10 ? Colors.red : Colors.blue.shade900)),
+                        ),
+                      IconButton(
+                        icon: const Icon(Icons.edit_note, color: Colors.orange),
+                        tooltip: 'Fix Question Error',
+                        onPressed: () {
+                          provider.pauseTimer();
+                          _showInQuizEditDialog(question);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        LatexText(question['question_text'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
+                        if (isMulti) const Padding(padding: EdgeInsets.only(top: 8), child: Text('(Select all correct options)', style: TextStyle(color: Colors.grey, fontSize: 12))),
+                        const SizedBox(height: 32),
+                        ...options.map((option) {
+                          bool isSelected = provider.userSelection.contains(option);
+                          bool isCorrect = correctAnswers.contains(option);
+                          Color? tileColor;
+                          
+                          if (provider.isAnswered) {
+                            if (isCorrect) tileColor = Colors.green.shade100;
+                            else if (isSelected) tileColor = Colors.red.shade100;
+                          }
 
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: InkWell(
-                          onTap: provider.isAnswered ? null : () {
-                            provider.toggleOption(option);
-                            if (settings.enableHaptics) Vibration.vibrate(duration: 50);
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: tileColor ?? (isSelected ? Colors.blue.shade50 : Colors.white),
-                              border: Border.all(color: isSelected ? Colors.blue : Colors.grey.shade300, width: 2),
-                              borderRadius: BorderRadius.circular(12),
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: InkWell(
+                              onTap: provider.isAnswered ? null : () {
+                                provider.toggleOption(option);
+                                if (settings.enableHaptics) Vibration.vibrate(duration: 50);
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: tileColor ?? (isSelected ? Colors.blue.shade50 : Colors.white),
+                                  border: Border.all(color: isSelected ? Colors.blue : Colors.grey.shade300, width: 2),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  children: [
+                                    isMulti 
+                                      ? Icon(isSelected ? Icons.check_box : Icons.check_box_outline_blank, color: isSelected ? Colors.blue : Colors.grey)
+                                      : Icon(isSelected ? Icons.radio_button_checked : Icons.radio_button_off, color: isSelected ? Colors.blue : Colors.grey),
+                                    const SizedBox(width: 12),
+                                    Expanded(child: LatexText(option, style: const TextStyle(fontSize: 16), showTTS: false)),
+                                    if (provider.isAnswered && isCorrect) const Icon(Icons.check_circle, color: Colors.green),
+                                    if (provider.isAnswered && !isCorrect && isSelected) const Icon(Icons.cancel, color: Colors.red),
+                                  ],
+                                ),
+                              ),
                             ),
-                            child: Row(
-                              children: [
-                                isMulti 
-                                  ? Icon(isSelected ? Icons.check_box : Icons.check_box_outline_blank, color: isSelected ? Colors.blue : Colors.grey)
-                                  : Icon(isSelected ? Icons.radio_button_checked : Icons.radio_button_off, color: isSelected ? Colors.blue : Colors.grey),
-                                const SizedBox(width: 12),
-                                Expanded(child: LatexText(option, style: const TextStyle(fontSize: 16), showTTS: false)),
-                                if (provider.isAnswered && isCorrect) const Icon(Icons.check_circle, color: Colors.green),
-                                if (provider.isAnswered && !isCorrect && isSelected) const Icon(Icons.cancel, color: Colors.red),
-                              ],
-                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+                  child: Row(
+                    children: [
+                      if (provider.currentIndex > 0)
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => provider.previousQuestion(),
+                            style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 56)),
+                            child: const Text('PREVIOUS'),
                           ),
                         ),
-                      );
-                    }),
-                  ],
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
-              child: Row(
-                children: [
-                  if (provider.currentIndex > 0)
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: provider.isAnswered ? null : () => provider.previousQuestion(),
-                        style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 56)),
-                        child: const Text('PREVIOUS'),
-                      ),
-                    ),
-                  if (provider.currentIndex > 0) const SizedBox(width: 8),
-                  if (provider.timerMode != TimerMode.speedRun)
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: provider.isAnswered ? null : () => provider.skipQuestion(),
-                        style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 56), foregroundColor: Colors.orange),
-                        child: const Text('SKIP'),
-                      ),
-                    ),
-                  if (provider.timerMode != TimerMode.speedRun) const SizedBox(width: 8),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton(
-                      onPressed: (provider.isAnswered || provider.userSelection.isEmpty) ? null : () {
-                        provider.submitAnswer();
-                        if (settings.enableHaptics) {
-                          final currentQ = provider.currentQuestions[provider.currentIndex];
-                          final List<String> correctAnswers = List<String>.from(currentQ['correct_answers']);
-                          bool correct = provider.userSelection.length == correctAnswers.length &&
-                                         provider.userSelection.every((element) => correctAnswers.contains(element));
-                          if (correct) {
-                            Vibration.vibrate(duration: 100);
-                          } else {
-                            Vibration.vibrate(pattern: [0, 50, 50, 50]);
-                          }
-                        }
-                      },
-                      style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 56), backgroundColor: Colors.blue, foregroundColor: Colors.white),
-                      child: Text(provider.isAnswered ? 'SUBMITTED' : 'SUBMIT ANSWER', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    ),
+                      if (provider.currentIndex > 0) const SizedBox(width: 8),
+                      if (provider.timerMode != TimerMode.speedRun && !provider.isAnswered)
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => provider.skipQuestion(),
+                            style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 56), foregroundColor: Colors.orange),
+                            child: const Text('SKIP'),
+                          ),
+                        ),
+                      if (provider.timerMode != TimerMode.speedRun && !provider.isAnswered) const SizedBox(width: 8),
+                      if (provider.isAnswered)
+                        Expanded(
+                          flex: 2,
+                          child: ElevatedButton.icon(
+                            onPressed: () => provider.nextQuestion(),
+                            icon: const Icon(Icons.arrow_forward),
+                            label: const Text('NEXT'),
+                            style: ElevatedButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 56),
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        )
+                      else
+                        Expanded(
+                          flex: 2,
+                          child: ElevatedButton(
+                            onPressed: provider.userSelection.isEmpty ? null : () => _submitAnswer(provider, settings),
+                            style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 56), backgroundColor: Colors.blue, foregroundColor: Colors.white),
+                            child: const Text('SUBMIT ANSWER', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         );
       },
     );
+  }
+
+  void _submitAnswer(QuizProvider provider, SettingsProvider settings) {
+    provider.submitAnswer();
+    if (settings.enableHaptics) {
+      final currentQ = provider.currentQuestions[provider.currentIndex];
+      final List<String> correctAnswers = List<String>.from(currentQ['correct_answers']);
+      bool correct = provider.userSelection.length == correctAnswers.length &&
+                      provider.userSelection.every((element) => correctAnswers.contains(element));
+      if (correct) {
+        Vibration.vibrate(duration: 100);
+      } else {
+        Vibration.vibrate(pattern: [0, 50, 50, 50]);
+      }
+    }
   }
 
   void _showInQuizEditDialog(Map<String, dynamic> question) {

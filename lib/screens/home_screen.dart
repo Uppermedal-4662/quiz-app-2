@@ -26,10 +26,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _checkFirstRun() async {
+    final auth = context.read<AuthService>();
+    
+    // Wait for auth to finish loading if it hasn't yet
+    if (auth.isLoading) {
+      Future.delayed(const Duration(milliseconds: 500), _checkFirstRun);
+      return;
+    }
+
     final prefs = await SharedPreferences.getInstance();
     final bool hasSeenTutorial = prefs.getBool('has_seen_tutorial_v2') ?? false;
     
-    if (!hasSeenTutorial) {
+    if (!hasSeenTutorial && mounted) {
       _showTutorial();
     }
   }
@@ -153,15 +161,41 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               const Icon(Icons.quiz, size: 100, color: Colors.blue),
               const SizedBox(height: 48),
-              ElevatedButton.icon(
-                key: _quizKey,
-                onPressed: () => Navigator.pushNamed(context, '/quiz'),
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Start Quiz'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  textStyle: const TextStyle(fontSize: 18),
-                ),
+              Consumer<QuizProvider>(
+                builder: (context, provider, child) {
+                  if (provider.hasSavedSession) {
+                    return ElevatedButton.icon(
+                      key: _quizKey,
+                      onPressed: () async {
+                        final resumed = await provider.resumeSession();
+                        if (resumed && context.mounted) {
+                          Navigator.pushNamed(context, '/quiz');
+                        } else if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to resume session.')));
+                        }
+                      },
+                      icon: const Icon(Icons.play_arrow),
+                      label: const Text('Resume Quiz'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        backgroundColor: Colors.orange,
+                        foregroundColor: Colors.white,
+                      ),
+                    );
+                  } else {
+                    return ElevatedButton.icon(
+                      key: _quizKey,
+                      onPressed: () => Navigator.pushNamed(context, '/quiz'),
+                      icon: const Icon(Icons.play_arrow),
+                      label: const Text('Start Quiz'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        textStyle: const TextStyle(fontSize: 18),
+                      ),
+                    );
+                  }
+                },
               ),
               const SizedBox(height: 16),
               if (!auth.isGuest)

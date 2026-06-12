@@ -106,11 +106,25 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf'],
+      withData: false, // Don't load data directly to avoid large memory spikes
     );
 
     if (result != null) {
+      final file = File(result.files.single.path!);
+      final fileSize = await file.length();
+      
+      // PDF Size Validation (10MB limit)
+      if (fileSize > 10 * 1024 * 1024) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('PDF size exceeds 10MB limit. Please choose a smaller file.')),
+          );
+        }
+        return;
+      }
+
       final fileName = result.files.single.name;
-      final Uint8List bytes = result.files.single.bytes ?? await File(result.files.single.path!).readAsBytes();
+      Uint8List? bytes = await file.readAsBytes();
       
       if (mounted) {
         try {
@@ -127,6 +141,9 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
               SnackBar(content: Text('Error: $e')),
             );
           }
+        } finally {
+          // Explicitly clear bytes from memory
+          bytes = null;
         }
       }
     }
@@ -257,7 +274,22 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
                           ),
                           IconButton(
                             icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () => provider.removeClass(cls['id']),
+                            onPressed: () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Delete Class?'),
+                                  content: Text('This will permanently remove "${cls['name']}" and all its questions.'),
+                                  actions: [
+                                    TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+                                    TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete', style: TextStyle(color: Colors.red))),
+                                  ],
+                                ),
+                              );
+                              if (confirm == true) {
+                                provider.removeClass(cls['id']);
+                              }
+                            },
                             tooltip: 'Delete Class',
                           ),
                         ],

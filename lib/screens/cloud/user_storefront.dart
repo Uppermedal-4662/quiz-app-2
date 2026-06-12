@@ -37,11 +37,15 @@ class _UserStorefrontState extends State<UserStorefront> {
     final auth = context.read<AuthService>();
     final cloud = context.read<CloudProvider>();
     
+    if (auth.role == UserRole.superAdmin) {
+      return await cloud.getAllBanks();
+    }
+    
     final doc = await FirebaseFirestore.instance.collection('users').doc(auth.user?.uid).get();
     if (!doc.exists) return [];
     
     final List<String> bankIds = List<String>.from(doc.data()?['accessible_banks'] ?? []);
-    return await cloud.getAccessibleBanks(bankIds);
+    return await cloud.getAccessibleBanks(bankIds, adminUid: auth.user?.uid);
   }
 
   Future<void> _downloadBank(Map<String, dynamic> bank, {int? existingLocalId}) async {
@@ -99,107 +103,158 @@ class _UserStorefrontState extends State<UserStorefront> {
           IconButton(onPressed: () => context.read<AuthService>().signOut(), icon: const Icon(Icons.logout)),
         ],
       ),
-      body: FutureBuilder<DocumentSnapshot>(
-        future: FirebaseFirestore.instance.collection('users').doc(auth.user?.uid).get(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-          
-          final userData = snapshot.data?.data() as Map<String, dynamic>?;
-          final bool canAccess = userData?['can_access_quizzes'] ?? true;
-
-          if (!canAccess) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.lock_person, size: 80, color: Colors.orange),
-                    const SizedBox(height: 24),
-                    const Text('Access Restricted', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Your access to the cloud question store has been temporarily suspended by an administrator.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  ],
-                ),
+      body: Column(
+        children: [
+          if (context.watch<CloudProvider>().isOffline)
+            Container(
+              color: Colors.red.shade100,
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              child: const Row(
+                children: [
+                  Icon(Icons.cloud_off, color: Colors.red),
+                  SizedBox(width: 8),
+                  Expanded(child: Text('Offline mode. Please check your internet connection.', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))),
+                ],
               ),
-            );
-          }
+            ),
+          Expanded(
+            child: FutureBuilder<DocumentSnapshot>(
+              future: FirebaseFirestore.instance.collection('users').doc(auth.user?.uid).get(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                
+                final userData = snapshot.data?.data() as Map<String, dynamic>?;
+                final bool canAccess = userData?['can_access_quizzes'] ?? true;
 
-          return Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search available banks...',
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    filled: true,
-                    fillColor: Colors.grey[100],
-                  ),
-                ),
-              ),
-              Expanded(
-                child: Stack(
-                  children: [
-                    FutureBuilder<List<Map<String, dynamic>>>(
-                      future: _banksFuture,
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                        final allBanks = snapshot.data ?? [];
-                        final banks = allBanks.where((b) => b['name'].toString().toLowerCase().contains(_searchQuery)).toList();
-
-                        if (banks.isEmpty) return const Center(child: Text('No matching banks found.'));
-
-                        return ListView.builder(
-                          itemCount: banks.length,
-                          itemBuilder: (context, index) {
-                            final bank = banks[index];
-                            
-                            // Check sync status
-                            final localClass = quizProvider.classes.cast<Map<String, dynamic>?>().firstWhere(
-                              (c) => c?['cloud_bank_id'] == bank['bank_id'], 
-                              orElse: () => null
-                            );
-
-                            bool isDownloaded = localClass != null;
-                            bool needsUpdate = false;
-                            if (isDownloaded) {
-                              final String localTime = localClass['cloud_updated_at'] ?? "";
-                              final String cloudTime = (bank['updated_at'] as Timestamp?)?.toDate().toIso8601String() ?? "";
-                              if (cloudTime.isNotEmpty && localTime != cloudTime) {
-                                needsUpdate = true;
-                              }
-                            }
-
-                            return Card(
-                              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              child: ListTile(
-                                title: Text(bank['name']),
-                                subtitle: Text(bank['description'] ?? ''),
-                                trailing: _buildTrailing(bank, localClass, isDownloaded, needsUpdate),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
-                    if (_isDownloading)
-                      Container(
-                        color: Colors.black26,
-                        child: const Center(child: CircularProgressIndicator()),
+                if (!canAccess) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32.0),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.lock_person, size: 80, color: Colors.orange),
+                          const SizedBox(height: 24),
+                          const Text('Access Restricted', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'Your access to the cloud question store has been temporarily suspended by an administrator.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ],
                       ),
+                    ),
+                  );
+                }
+
+                return Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Search available banks...',
+                          prefixIcon: const Icon(Icons.search),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          filled: true,
+                          fillColor: Colors.grey[100],
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          FutureBuilder<List<Map<String, dynamic>>>(
+                            future: _banksFuture,
+                            builder: (context, snapshot) {
+                              if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                              
+                              if (snapshot.hasError) {
+                                return Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(24.0),
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                                        const SizedBox(height: 16),
+                                        Text('Error: ${snapshot.error}', textAlign: TextAlign.center),
+                                        const SizedBox(height: 16),
+                                        ElevatedButton(onPressed: _refresh, child: const Text('Retry')),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }
+
+                              final allBanks = snapshot.data ?? [];
+                              final banks = allBanks.where((b) => b['name'].toString().toLowerCase().contains(_searchQuery)).toList();
+
+                              if (banks.isEmpty) {
+                                return Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.search_off, size: 64, color: Colors.grey[400]),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        _searchQuery.isEmpty ? 'No banks available yet.' : 'No matching banks found.',
+                                        style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }
+
+                              return ListView.builder(
+                                itemCount: banks.length,
+                                itemBuilder: (context, index) {
+                                  final bank = banks[index];
+                                  
+                                  // Check sync status
+                                  final localClass = quizProvider.classes.cast<Map<String, dynamic>?>().firstWhere(
+                                    (c) => c?['cloud_bank_id'] == bank['bank_id'], 
+                                    orElse: () => null
+                                  );
+
+                                  bool isDownloaded = localClass != null;
+                                  bool needsUpdate = false;
+                                  if (isDownloaded) {
+                                    final String localTime = localClass['cloud_updated_at'] ?? "";
+                                    final String cloudTime = (bank['updated_at'] as Timestamp?)?.toDate().toIso8601String() ?? "";
+                                    if (cloudTime.isNotEmpty && localTime != cloudTime) {
+                                      needsUpdate = true;
+                                    }
+                                  }
+
+                                  return Card(
+                                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                    child: ListTile(
+                                      title: Text(bank['name']),
+                                      subtitle: Text(bank['description'] ?? ''),
+                                      trailing: _buildTrailing(bank, localClass, isDownloaded, needsUpdate),
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                          if (_isDownloading)
+                            Container(
+                              color: Colors.black26,
+                              child: const Center(child: CircularProgressIndicator()),
+                            ),
+                        ],
+                      ),
+                    ),
                   ],
-                ),
-              ),
-            ],
-          );
-        },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

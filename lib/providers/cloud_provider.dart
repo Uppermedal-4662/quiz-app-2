@@ -1,17 +1,47 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:io';
 
 class CloudProvider with ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   bool _isLoading = false;
+  bool _isOffline = false;
 
   bool get isLoading => _isLoading;
+  bool get isOffline => _isOffline;
+
+  // --- Helper to handle network errors ---
+  Future<T> _withNetworkCheck<T>(Future<T> Function() action) async {
+    try {
+      final result = await action();
+      if (_isOffline) {
+        _isOffline = false;
+        notifyListeners();
+      }
+      return result;
+    } on SocketException {
+      _isOffline = true;
+      notifyListeners();
+      throw Exception('No internet connection. Operating in offline mode.');
+    } on FirebaseException catch (e) {
+      if (e.code == 'unavailable') {
+        _isOffline = true;
+        notifyListeners();
+        throw Exception('No internet connection to cloud services.');
+      }
+      rethrow;
+    } catch (e) {
+      rethrow;
+    }
+  }
 
   // --- App Configuration ---
 
   Future<Map<String, dynamic>> getAppConfig() async {
-    final doc = await _firestore.collection('app_config').doc('global').get();
-    return doc.data() ?? {};
+    return _withNetworkCheck(() async {
+      final doc = await _firestore.collection('app_config').doc('global').get();
+      return doc.data() ?? {};
+    });
   }
 
   Future<void> updateAppConfig(Map<String, dynamic> config) async {
@@ -182,7 +212,7 @@ class CloudProvider with ChangeNotifier {
   // --- User Actions ---
 
   Future<List<Map<String, dynamic>>> getAccessibleBanks(List<String> bankIds, {String? adminUid}) async {
-    final Set<Map<String, dynamic>> banks = {};
+    final Map<String, Map<String, dynamic>> banksMap = {};
 
     // 1. Get banks by ID list (explicit permissions)
     if (bankIds.isNotEmpty) {
@@ -191,7 +221,9 @@ class CloudProvider with ChangeNotifier {
         final snapshot = await _firestore.collection('question_banks')
             .where(FieldPath.documentId, whereIn: chunk)
             .get();
-        banks.addAll(snapshot.docs.map((doc) => {'bank_id': doc.id, ...doc.data()}));
+        for (var doc in snapshot.docs) {
+          banksMap[doc.id] = {'bank_id': doc.id, ...doc.data()};
+        }
       }
     }
 
@@ -200,10 +232,12 @@ class CloudProvider with ChangeNotifier {
       final snapshot = await _firestore.collection('question_banks')
           .where('created_by', isEqualTo: adminUid)
           .get();
-      banks.addAll(snapshot.docs.map((doc) => {'bank_id': doc.id, ...doc.data()}));
+      for (var doc in snapshot.docs) {
+        banksMap[doc.id] = {'bank_id': doc.id, ...doc.data()};
+      }
     }
 
-    return banks.toList();
+    return banksMap.values.toList();
   }
 
   List<List<T>> _chunkList<T>(List<T> list, int chunkSize) {

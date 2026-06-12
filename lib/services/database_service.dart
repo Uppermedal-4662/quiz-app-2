@@ -67,44 +67,72 @@ class DatabaseService {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 2) {
-      await _createFilesTable(db);
+    await db.transaction((txn) async {
+      if (oldVersion < 2) {
+        await _createFilesTable(txn);
+      }
+      if (oldVersion < 3) {
+        await _createHistoryTables(txn);
+        await _upgradeToV3(txn);
+      }
+      if (oldVersion < 4) {
+        try {
+          await txn.execute('ALTER TABLE questions ADD COLUMN asked_count INTEGER DEFAULT 0');
+        } catch (e) {
+          debugPrint('Migration Error (v4): $e');
+        }
+      }
+      if (oldVersion < 5) {
+        try {
+          await txn.execute('ALTER TABLE classes ADD COLUMN cloud_bank_id TEXT');
+          await txn.execute('ALTER TABLE classes ADD COLUMN cloud_updated_at TEXT');
+        } catch (e) {
+          debugPrint('Migration Error (v5): $e');
+        }
+      }
+      if (oldVersion < 6) {
+        try {
+          await txn.execute('ALTER TABLE questions ADD COLUMN correct_streak INTEGER DEFAULT 0');
+        } catch (e) {
+          debugPrint('Migration Error (v6): $e');
+        }
+      }
+    });
+  }
+
+  // Helper for v3 upgrade inside transaction
+  Future<void> _upgradeToV3(dynamic txnOrDb) async {
+    try {
+      await txnOrDb.execute('ALTER TABLE questions ADD COLUMN correct_answers TEXT');
+    } catch (e) {
+      debugPrint('Column already exists or migration error: $e');
     }
-    if (oldVersion < 3) {
-      await _createHistoryTables(db);
-      await _upgradeToV3(db);
-    }
-    if (oldVersion < 4) {
-      try {
-        await db.execute('ALTER TABLE questions ADD COLUMN asked_count INTEGER DEFAULT 0');
-      } catch (e) {}
-    }
-    if (oldVersion < 5) {
-      try {
-        await db.execute('ALTER TABLE classes ADD COLUMN cloud_bank_id TEXT');
-        await db.execute('ALTER TABLE classes ADD COLUMN cloud_updated_at TEXT');
-      } catch (e) {}
-    }
-    if (oldVersion < 6) {
-      try {
-        await db.execute('ALTER TABLE questions ADD COLUMN correct_streak INTEGER DEFAULT 0');
-      } catch (e) {}
+
+    final List<Map<String, dynamic>> questions = await txnOrDb.query('questions');
+    final security = SecurityService();
+    
+    for (var q in questions) {
+      if (q['correct_answer'] != null && q['correct_answers'] == null) {
+        try {
+          final decrypted = security.decryptData(q['correct_answer']);
+          final jsonArray = jsonEncode([decrypted]);
+          final encrypted = security.encryptData(jsonArray);
+          
+          await txnOrDb.update(
+            'questions',
+            {'correct_answers': encrypted},
+            where: 'id = ?',
+            whereArgs: [q['id']],
+          );
+        } catch (e) {
+          debugPrint('Error migrating question ${q['id']}: $e');
+        }
+      }
     }
   }
 
-  // ... (existing methods) ...
-
-  Future<void> updateMastery(int questionId, bool isCorrect) async {
-    final db = await database;
-    if (isCorrect) {
-      await db.rawUpdate('UPDATE questions SET correct_streak = correct_streak + 1 WHERE id = ?', [questionId]);
-    } else {
-      await db.rawUpdate('UPDATE questions SET correct_streak = 0 WHERE id = ?', [questionId]);
-    }
-  }
-
-  Future<void> _createFilesTable(Database db) async {
-    await db.execute('''
+  Future<void> _createFilesTable(dynamic txnOrDb) async {
+    await txnOrDb.execute('''
       CREATE TABLE files (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         class_id INTEGER,
@@ -115,8 +143,8 @@ class DatabaseService {
     ''');
   }
 
-  Future<void> _createHistoryTables(Database db) async {
-    await db.execute('''
+  Future<void> _createHistoryTables(dynamic txnOrDb) async {
+    await txnOrDb.execute('''
       CREATE TABLE quiz_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         class_id INTEGER,
@@ -128,7 +156,7 @@ class DatabaseService {
         FOREIGN KEY (class_id) REFERENCES classes (id) ON DELETE CASCADE
       )
     ''');
-    await db.execute('''
+    await txnOrDb.execute('''
       CREATE TABLE quiz_history_details (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         history_id INTEGER,
@@ -138,34 +166,6 @@ class DatabaseService {
         FOREIGN KEY (history_id) REFERENCES quiz_history (id) ON DELETE CASCADE
       )
     ''');
-  }
-
-  Future<void> _upgradeToV3(Database db) async {
-    try {
-      await db.execute('ALTER TABLE questions ADD COLUMN correct_answers TEXT');
-    } catch (e) {}
-
-    final List<Map<String, dynamic>> questions = await db.query('questions');
-    final security = SecurityService();
-    
-    for (var q in questions) {
-      if (q['correct_answer'] != null && q['correct_answers'] == null) {
-        try {
-          final decrypted = security.decryptData(q['correct_answer']);
-          final jsonArray = jsonEncode([decrypted]);
-          final encrypted = security.encryptData(jsonArray);
-          
-          await db.update(
-            'questions',
-            {'correct_answers': encrypted},
-            where: 'id = ?',
-            whereArgs: [q['id']],
-          );
-        } catch (e) {
-          print('Error migrating question ${q['id']}: $e');
-        }
-      }
-    }
   }
 
   // Classes methods

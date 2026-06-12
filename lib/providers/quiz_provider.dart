@@ -39,6 +39,10 @@ class QuizProvider with ChangeNotifier {
   List<Map<String, dynamic>?> _sessionResults = [];
   int _activeClassId = 0;
 
+  bool _hasSavedSession = false;
+  bool get hasSavedSession => _hasSavedSession;
+
+  // ... (getters stay the same)
   List<Map<String, dynamic>> get classes => _classes;
   List<Map<String, dynamic>> get classFiles => _classFiles;
   bool get isLoading => _isLoading;
@@ -56,6 +60,78 @@ class QuizProvider with ChangeNotifier {
   bool get isQuizActive => _isQuizActive;
   bool get isAnswered => _isAnswered;
   List<String> get userSelection => _userSelection;
+
+  QuizProvider() {
+    _checkSavedSession();
+  }
+
+  Future<void> _checkSavedSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    _hasSavedSession = prefs.containsKey('saved_quiz_state');
+    notifyListeners();
+  }
+
+  Future<void> _saveSessionToPrefs() async {
+    if (!_isQuizActive) return;
+    final prefs = await SharedPreferences.getInstance();
+    
+    // We can't save the full encrypted DB object easily if it has large JSON, but we can save the IDs and active state.
+    // To keep it robust, we serialize the necessary engine state.
+    final state = {
+      'classId': _activeClassId,
+      'questions': _currentQuestions,
+      'currentIndex': _currentIndex,
+      'score': _score,
+      'timerMode': _timerMode.index,
+      'secondsRemaining': _secondsRemaining,
+      'originalLimit': _originalLimit,
+      'isAnswered': _isAnswered,
+      'userSelection': _userSelection,
+      'totalTimeSpent': _totalTimeSpent,
+      'sessionResults': _sessionResults,
+    };
+    
+    await prefs.setString('saved_quiz_state', jsonEncode(state));
+    _hasSavedSession = true;
+  }
+
+  Future<void> clearSavedSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('saved_quiz_state');
+    _hasSavedSession = false;
+    notifyListeners();
+  }
+
+  Future<bool> resumeSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? stateStr = prefs.getString('saved_quiz_state');
+    if (stateStr == null) return false;
+
+    try {
+      final state = jsonDecode(stateStr);
+      
+      _activeClassId = state['classId'];
+      _currentQuestions = (state['questions'] as List).cast<Map<String, dynamic>>();
+      _currentIndex = state['currentIndex'];
+      _score = state['score'];
+      _timerMode = TimerMode.values[state['timerMode']];
+      _secondsRemaining = state['secondsRemaining'];
+      _originalLimit = state['originalLimit'];
+      _isAnswered = state['isAnswered'];
+      _userSelection = (state['userSelection'] as List).cast<String>();
+      _totalTimeSpent = state['totalTimeSpent'];
+      _sessionResults = (state['sessionResults'] as List).cast<Map<String, dynamic>?>();
+
+      _isQuizActive = true;
+      _startTimer();
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('Failed to resume session: $e');
+      await clearSavedSession();
+      return false;
+    }
+  }
 
   Future<void> loadApiKey() async {
     _apiKey = await _securityService.getApiKey();
@@ -303,8 +379,23 @@ class QuizProvider with ChangeNotifier {
   }
 
   Future<void> _processAndSaveQuestions(int classId, List<Map<String, dynamic>> questions) async {
-    final encryptedQuestions = questions.map((q) {
+    // 1. Fetch existing questions to prevent duplicates
+    final existingEncrypted = await _databaseService.getQuestionsByClass(classId);
+    final Set<String> existingTexts = existingEncrypted.map((q) {
+      return _securityService.decryptData(q['question_text']).trim().toLowerCase();
+    }).toSet();
+
+    final List<Map<String, String>> newEncryptedQuestions = [];
+
+    for (var q in questions) {
       final String questionText = q['question_text'] as String;
+      
+      // Duplicate check
+      if (existingTexts.contains(questionText.trim().toLowerCase())) {
+        continue; // Skip this question
+      }
+      existingTexts.add(questionText.trim().toLowerCase()); // Add to set for subsequent checks within this batch
+
       final List<dynamic> options = q['options'] as List<dynamic>;
       
       List<String> correctAnswersList = [];
@@ -318,14 +409,16 @@ class QuizProvider with ChangeNotifier {
       final String encryptedOptionsJson = jsonEncode(options.map((opt) => _securityService.encryptData(opt.toString())).toList());
       final String encryptedCorrectAnswersJson = jsonEncode(correctAnswersList.map((ans) => _securityService.encryptData(ans)).toList());
 
-      return {
+      newEncryptedQuestions.add({
         'question_text': encryptedQuestionText,
         'options': encryptedOptionsJson,
         'correct_answers': encryptedCorrectAnswersJson,
-      };
-    }).toList();
+      });
+    }
 
-    await _databaseService.insertQuestions(classId, encryptedQuestions);
+    if (newEncryptedQuestions.isNotEmpty) {
+      await _databaseService.insertQuestions(classId, newEncryptedQuestions);
+    }
   }
 
   Future<List<Map<String, dynamic>>> getQuestions(int classId, int count, {bool randomize = true}) async {
@@ -335,7 +428,7 @@ class QuizProvider with ChangeNotifier {
       
       List<Map<String, dynamic>> selected;
       if (randomize) {
-        selected = _weightedRandomSelect(list, count);
+        selected = weightedRandomSelect(list, count);
       } else {
         selected = (count == -1 || count > list.length) ? list : list.take(count).toList();
       }
@@ -367,7 +460,8 @@ class QuizProvider with ChangeNotifier {
     }
   }
 
-  List<Map<String, dynamic>> _weightedRandomSelect(List<Map<String, dynamic>> questions, int count) {
+  @visibleForTesting
+  static List<Map<String, dynamic>> weightedRandomSelect(List<Map<String, dynamic>> questions, int count) {
     if (questions.isEmpty) return [];
     if (count == -1) count = questions.length;
     if (count >= questions.length) {
@@ -435,6 +529,7 @@ class QuizProvider with ChangeNotifier {
     _totalTimeSpent = 0;
     _sessionResults = List.filled(questions.length, null); // Reset session state
     _startTimer();
+    _saveSessionToPrefs();
     notifyListeners();
   }
 
@@ -487,6 +582,7 @@ class QuizProvider with ChangeNotifier {
       'is_correct': correct ? 1 : 0,
     };
 
+    _saveSessionToPrefs();
     notifyListeners();
 
     int delay = _secondsRemaining <= 0 ? 500 : 1500;
@@ -502,6 +598,7 @@ class QuizProvider with ChangeNotifier {
       if (_timerMode == TimerMode.perQuestion && !_isAnswered) {
         _secondsRemaining = _originalLimit;
       }
+      _saveSessionToPrefs();
       notifyListeners();
     } else {
       finishQuiz();
@@ -512,6 +609,7 @@ class QuizProvider with ChangeNotifier {
     if (_currentIndex > 0) {
       _currentIndex--;
       _restoreStateForCurrentIndex();
+      _saveSessionToPrefs();
       notifyListeners();
     }
   }
@@ -528,6 +626,7 @@ class QuizProvider with ChangeNotifier {
       'is_correct': 0,
     };
     
+    _saveSessionToPrefs();
     nextQuestion();
   }
 
@@ -565,6 +664,7 @@ class QuizProvider with ChangeNotifier {
       final validDetails = _sessionResults.where((r) => r != null).cast<Map<String, dynamic>>().toList();
       await _databaseService.saveQuizHistoryDetails(historyId, validDetails);
     }
+    await clearSavedSession();
     notifyListeners();
   }
 

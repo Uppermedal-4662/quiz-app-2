@@ -24,9 +24,21 @@ class LatexText extends StatelessWidget {
 
   Future<void> _speak(String text) async {
     FlutterTts flutterTts = FlutterTts();
-    // Strip LaTeX for cleaner speech if possible, or just read it.
-    // Basic cleanup: remove $ and \
-    String cleanText = text.replaceAll('\$', '').replaceAll('\\', ' ');
+    
+    // Improved Mathematical TTS Cleanup
+    String cleanText = text
+        .replaceAll('\$', '')
+        .replaceAll(RegExp(r'\\frac\{(.*?)\}\{(.*?)\}'), r'$1 divided by $2')
+        .replaceAll(RegExp(r'\\sqrt\{(.*?)\}'), r'square root of $1')
+        .replaceAll(RegExp(r'\\times'), 'times')
+        .replaceAll(RegExp(r'\\div'), 'divided by')
+        .replaceAll(RegExp(r'\\pm'), 'plus or minus')
+        .replaceAll(RegExp(r'\^\{(.*?)\}'), r' to the power of $1')
+        .replaceAll(RegExp(r'\^(.)'), r' to the power of $1')
+        .replaceAll(RegExp(r'_\{(.*?)\}'), r' subscript $1')
+        .replaceAll(RegExp(r'_(.)'), r' subscript $1')
+        .replaceAll('\\', ' ');
+
     await flutterTts.speak(cleanText);
   }
 
@@ -56,15 +68,18 @@ class LatexText extends StatelessWidget {
           if (parts[i].isNotEmpty) {
             spans.add(WidgetSpan(
               alignment: PlaceholderAlignment.middle,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2.0),
-                child: Math.tex(
-                  parts[i],
-                  textStyle: style?.copyWith(fontSize: (fontSize ?? 16) + 2) ?? 
-                            TextStyle(fontSize: (fontSize ?? 16) + 2, color: color),
-                  onErrorFallback: (err) => Text(
-                    '\$${parts[i]}\$',
-                    style: const TextStyle(color: Colors.red),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2.0),
+                  child: Math.tex(
+                    parts[i],
+                    textStyle: style?.copyWith(fontSize: (fontSize ?? 16) + 2) ?? 
+                              TextStyle(fontSize: (fontSize ?? 16) + 2, color: color),
+                    onErrorFallback: (err) => Text(
+                      '\$${parts[i]}\$',
+                      style: const TextStyle(color: Colors.red),
+                    ),
                   ),
                 ),
               ),
