@@ -203,7 +203,16 @@ class _HomeScreenState extends State<HomeScreen> {
               if (!auth.isGuest)
                 OutlinedButton.icon(
                   key: _storeKey,
-                  onPressed: () => Navigator.pushNamed(context, '/store'),
+                  onPressed: () {
+                    // Navigate based on role to the correct cloud dashboard
+                    if (auth.role == UserRole.superAdmin) {
+                      Navigator.pushNamed(context, '/superadmin');
+                    } else if (auth.role == UserRole.admin) {
+                      Navigator.pushNamed(context, '/admin');
+                    } else {
+                      Navigator.pushNamed(context, '/store');
+                    }
+                  },
                   icon: const Icon(Icons.cloud_download),
                   label: const Text('Question Store'),
                   style: OutlinedButton.styleFrom(

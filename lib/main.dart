@@ -89,6 +89,9 @@ class QuizApp extends StatelessWidget {
             '/history': (context) => const HistoryScreen(),
             '/settings': (context) => const SettingsScreen(),
             '/guide': (context) => const GuideScreen(),
+            '/store': (context) => const UserStorefront(),
+            '/admin': (context) => const AdminDashboard(),
+            '/superadmin': (context) => const SuperAdminDashboard(),
           },
         );
       },

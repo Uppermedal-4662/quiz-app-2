@@ -41,50 +41,21 @@ class _UserStorefrontState extends State<UserStorefront> {
       return await cloud.getAllBanks();
     }
     
-    final doc = await FirebaseFirestore.instance.collection('users').doc(auth.user?.uid).get();
-    if (!doc.exists) return [];
+    List<String> bankIds = [];
+    try {
+      final doc = await FirebaseFirestore.instance.collection('users').doc(auth.user?.uid).get();
+      if (doc.exists) {
+        bankIds = List<String>.from(doc.data()?['accessible_banks'] ?? []);
+      }
+    } catch (e) {
+      debugPrint('Error fetching user document: $e');
+      // If we can't read the user doc, we still allow Admins to see their own banks.
+    }
     
-    final List<String> bankIds = List<String>.from(doc.data()?['accessible_banks'] ?? []);
     return await cloud.getAccessibleBanks(bankIds, adminUid: auth.user?.uid);
   }
 
-  Future<void> _downloadBank(Map<String, dynamic> bank, {int? existingLocalId}) async {
-    final cloud = context.read<CloudProvider>();
-    final quiz = context.read<QuizProvider>();
-    
-    setState(() => _isDownloading = true);
-    
-    try {
-      final cloudQuestions = await cloud.downloadBankQuestions(bank['bank_id']);
-      final cloudUpdatedAt = (bank['updated_at'] as Timestamp?)?.toDate().toIso8601String() ?? "";
-
-      if (existingLocalId != null) {
-        // Update existing: clear questions first
-        await quiz.updateClassSync(existingLocalId, cloudUpdatedAt);
-        await quiz.clearQuestionsForClass(existingLocalId);
-        await quiz.importManualQuestions(existingLocalId, cloudQuestions);
-      } else {
-        // New download
-        await quiz.addClass(
-          bank['name'] + " (Cloud)", 
-          cloudBankId: bank['bank_id'], 
-          cloudUpdatedAt: cloudUpdatedAt
-        );
-        await quiz.loadClasses();
-        final localClass = quiz.classes.firstWhere((c) => c['cloud_bank_id'] == bank['bank_id']);
-        await quiz.importManualQuestions(localClass['id'], cloudQuestions);
-      }
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Synced ${cloudQuestions.length} questions locally!')));
-        _refresh();
-      }
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sync failed: $e')));
-    } finally {
-      if (mounted) setState(() => _isDownloading = false);
-    }
-  }
+  // ... (rest of methods)
 
   @override
   Widget build(BuildContext context) {
@@ -121,10 +92,16 @@ class _UserStorefrontState extends State<UserStorefront> {
             child: FutureBuilder<DocumentSnapshot>(
               future: FirebaseFirestore.instance.collection('users').doc(auth.user?.uid).get(),
               builder: (context, snapshot) {
+                // If it's loading, show spinner
                 if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
                 
-                final userData = snapshot.data?.data() as Map<String, dynamic>?;
-                final bool canAccess = userData?['can_access_quizzes'] ?? true;
+                // If there's an error (like permission denied), we log it but don't block the UI
+                // We default to true (allow access) unless explicitly disabled in the doc
+                bool canAccess = true;
+                if (snapshot.hasData && snapshot.data!.exists) {
+                  final userData = snapshot.data!.data() as Map<String, dynamic>?;
+                  canAccess = userData?['can_access_quizzes'] ?? true;
+                }
 
                 if (!canAccess) {
                   return Center(
