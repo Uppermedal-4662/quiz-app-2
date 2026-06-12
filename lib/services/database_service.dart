@@ -2,6 +2,7 @@ import 'package:path/path.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'security_service.dart';
 

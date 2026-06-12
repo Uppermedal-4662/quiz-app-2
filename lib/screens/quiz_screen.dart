@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:confetti/confetti.dart';
 import 'package:vibration/vibration.dart';
@@ -266,7 +267,20 @@ class _QuizScreenState extends State<QuizScreen> {
             },
             ...Map.fromIterable(
               Iterable.generate(options.length),
-              key: (i) => SingleActivator(LogicalKeyboardKey.values.firstWhere((k) => k.debugName == 'Digit ${i + 1}')),
+              key: (i) {
+                final digits = [
+                  LogicalKeyboardKey.digit1,
+                  LogicalKeyboardKey.digit2,
+                  LogicalKeyboardKey.digit3,
+                  LogicalKeyboardKey.digit4,
+                  LogicalKeyboardKey.digit5,
+                  LogicalKeyboardKey.digit6,
+                  LogicalKeyboardKey.digit7,
+                  LogicalKeyboardKey.digit8,
+                  LogicalKeyboardKey.digit9,
+                ];
+                return SingleActivator(digits[i % digits.length]);
+              },
               value: (i) => () {
                 if (!provider.isAnswered) {
                   provider.toggleOption(options[i]);
