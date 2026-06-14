@@ -119,6 +119,7 @@ class AuthService extends ChangeNotifier {
       debugPrint('CRITICAL: Error setting up user session: $e');
       // If we failed to fetch/setup, default to user role but keep loading state
       _role = UserRole.user;
+      rethrow; // Rethrow to allow UI to handle it
     } finally {
       _isLoading = false;
       notifyListeners();

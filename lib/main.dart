@@ -17,6 +17,7 @@ import 'screens/email_verification_screen.dart';
 import 'screens/cloud/super_admin_dashboard.dart';
 import 'screens/cloud/admin_dashboard.dart';
 import 'screens/cloud/user_storefront.dart';
+import 'screens/cloud/user_messages_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/guide_screen.dart';
 
@@ -92,6 +93,7 @@ class QuizApp extends StatelessWidget {
             '/store': (context) => const UserStorefront(),
             '/admin': (context) => const AdminDashboard(),
             '/superadmin': (context) => const SuperAdminDashboard(),
+            '/messages': (context) => const UserMessagesScreen(),
           },
         );
       },

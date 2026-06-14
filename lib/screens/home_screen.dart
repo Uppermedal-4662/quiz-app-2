@@ -112,6 +112,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/messages');
+            },
+            child: const Text('View My Messages'),
+          ),
+          const Spacer(),
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () async {

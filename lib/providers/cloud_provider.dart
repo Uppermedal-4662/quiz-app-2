@@ -52,20 +52,20 @@ class CloudProvider with ChangeNotifier {
 
   Future<void> sendMessageToAdmin(String userId, String email, String message) async {
     final userDoc = await _firestore.collection('users').doc(userId).get();
-    if (userDoc.data()?['can_message'] == false) {
+    if (userDoc.exists && userDoc.data()?['can_message'] == false) {
       throw Exception('Your messaging privileges have been suspended by an administrator.');
     }
 
     final now = DateTime.now();
     final startOfDay = DateTime(now.year, now.month, now.day);
     
-    // Fetch all messages from today. 
-    // We avoid .where('sender_uid') here to bypass the need for a composite index.
+    // Fetch only this user's messages from today to comply with security rules.
     final snapshot = await _firestore.collection('messages')
+        .where('sender_uid', isEqualTo: userId)
         .where('timestamp', isGreaterThanOrEqualTo: startOfDay)
         .get();
     
-    final userMessagesCount = snapshot.docs.where((doc) => doc.data()['sender_uid'] == userId).length;
+    final userMessagesCount = snapshot.docs.length;
     
     if (userMessagesCount >= 5) {
       throw Exception('Daily message limit reached (5 per day). Please try again tomorrow.');

