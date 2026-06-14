@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../providers/cloud_provider.dart';
 import '../../services/auth_service.dart';
 
@@ -13,7 +14,6 @@ class SuperAdminDashboard extends StatefulWidget {
 }
 
 class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
-  late Future<List<Map<String, dynamic>>> _usersFuture;
   List<Map<String, dynamic>> _allBanks = [];
   
   // Search state
@@ -35,9 +35,6 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   }
 
   void _refresh() {
-    setState(() {
-      _usersFuture = context.read<CloudProvider>().getAllUsers();
-    });
     context.read<CloudProvider>().getAllBanks().then((banks) {
       if (mounted) setState(() => _allBanks = banks);
     });
