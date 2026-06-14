@@ -1,0 +1,96 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // --- HELPER FUNCTIONS ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function getProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function isSuperAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        getProfile().get('role', 'user') == 'super_admin';
+    }
+    
+    function isAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        getProfile().get('role', 'user') == 'admin';
+    }
+
+    // --- USER PROFILES ---
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
+      
+      allow create: if isSignedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.get('role', 'user') == 'user' &&
+        request.resource.data.get('accessible_banks', []) == [];
+        
+      allow update: if isSuperAdmin() || (
+        isSignedIn() && 
+        request.auth.uid == userId &&
+        !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['role', 'is_disabled', 'accessible_banks', 'can_view_inbox'])
+      );
+    }
+
+    // --- QUESTION BANKS ---
+    match /question_banks/{bankId} {
+      allow read: if isSuperAdmin() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        bankId in getProfile().get('accessible_banks', [])
+      ) || (
+        resource != null && 
+        resource.data.get('created_by', '') == request.auth.uid
+      );
+      
+      allow create: if isSuperAdmin() || isAdmin();
+      
+      allow update, delete: if isSuperAdmin() || (
+        resource != null && 
+        resource.data.get('created_by', '') == request.auth.uid
+      );
+
+      // --- CLOUD QUESTIONS (Sub-collection) ---
+      match /cloud_questions/{qId} {
+        allow read: if isSuperAdmin() || (
+          isSignedIn() &&
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          bankId in getProfile().get('accessible_banks', [])
+        ) || 
+        get(/databases/$(database)/documents/question_banks/$(bankId)).data.get('created_by', '') == request.auth.uid;
+          
+        allow write: if isSuperAdmin() || 
+        get(/databases/$(database)/documents/question_banks/$(bankId)).data.get('created_by', '') == request.auth.uid;
+      }
+    }
+
+    // --- APP CONFIG ---
+    match /app_config/{configId} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // --- MESSAGES ---
+    match /messages/{messageId} {
+      allow create: if isSignedIn() && 
+        request.resource.data.get('sender_uid', '') == request.auth.uid;
+      
+      allow read, update: if isSuperAdmin() || (
+        resource != null && 
+        resource.data.get('sender_uid', '') == request.auth.uid
+      ) || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        getProfile().get('can_view_inbox', false) == true
+      );
+    }
+  }
+}

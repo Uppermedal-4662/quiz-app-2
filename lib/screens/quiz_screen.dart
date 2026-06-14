@@ -181,12 +181,19 @@ class _QuizScreenState extends State<QuizScreen> {
               ),
               const SizedBox(height: 24),
               const Text('3. Timer Mode', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              ...TimerMode.values.map((mode) => RadioListTile<TimerMode>(
+              ...TimerMode.values.map((mode) => ListTile(
                 title: Text(mode.toString().split('.').last.toUpperCase()),
                 subtitle: Text(_getTimerDescription(mode)),
-                value: mode,
-                groupValue: _selectedTimerMode,
-                onChanged: (v) => setState(() => _selectedTimerMode = v!),
+                leading: Radio<TimerMode>(
+                  value: mode,
+                  groupValue: _selectedTimerMode,
+                  onChanged: (v) {
+                    if (v != null) {
+                      setState(() => _selectedTimerMode = v);
+                    }
+                  },
+                ),
+                onTap: () => setState(() => _selectedTimerMode = mode),
               )),
               if (_selectedTimerMode != TimerMode.none) ...[
                 const SizedBox(height: 24),
@@ -333,8 +340,11 @@ class _QuizScreenState extends State<QuizScreen> {
                           Color? tileColor;
                           
                           if (provider.isAnswered) {
-                            if (isCorrect) tileColor = Colors.green.shade100;
-                            else if (isSelected) tileColor = Colors.red.shade100;
+                            if (isCorrect) {
+                              tileColor = Colors.green.shade100;
+                            } else if (isSelected) {
+                              tileColor = Colors.red.shade100;
+                            }
                           }
 
                           return Padding(
@@ -557,12 +567,11 @@ class _QuizScreenState extends State<QuizScreen> {
                     'options': opts,
                     'correct_answers': selectedAnswers,
                   });
-                  if (mounted) {
-                    provider.resumeTimer();
-                    Navigator.pop(context);
-                  }
+                  if (!context.mounted) return;
+                  provider.resumeTimer();
+                  Navigator.pop(context);
                 } catch (e) {
-                  if (mounted) {
+                  if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
                   }
                 }

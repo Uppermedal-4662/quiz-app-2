@@ -383,12 +383,11 @@ class _ContentManagementScreenState extends State<ContentManagementScreen> {
                   } else {
                     await provider.addManualQuestion(widget.classId, text, options, selectedAnswers);
                   }
-                  if (mounted) {
-                    Navigator.pop(context);
-                    _refreshQuestions();
-                  }
+                  if (!context.mounted) return;
+                  Navigator.pop(context);
+                  _refreshQuestions();
                 } catch (e) {
-                  if (mounted) {
+                  if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(content: Text('Error: $e')),
                     );
@@ -418,12 +417,11 @@ class _ContentManagementScreenState extends State<ContentManagementScreen> {
             onPressed: () async {
               try {
                 await context.read<QuizProvider>().deleteQuestion(id);
-                if (mounted) {
-                  Navigator.pop(context);
-                  _refreshQuestions();
-                }
+                if (!context.mounted) return;
+                Navigator.pop(context);
+                _refreshQuestions();
               } catch (e) {
-                if (mounted) {
+                if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Error: $e')),
                   );

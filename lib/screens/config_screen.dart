@@ -158,7 +158,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   )
                 else
                   DropdownButtonFormField<String>(
-                    value: provider.availableModels.contains(_selectedModel) ? _selectedModel : provider.availableModels.first,
+                    initialValue: provider.availableModels.contains(_selectedModel) ? _selectedModel : provider.availableModels.first,
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
                       contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),

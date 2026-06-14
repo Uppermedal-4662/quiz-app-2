@@ -4,7 +4,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tutorial_coach_mark/tutorial_coach_mark.dart';
 import '../providers/cloud_provider.dart';
 import '../providers/quiz_provider.dart';
-import '../providers/settings_provider.dart';
 import '../services/auth_service.dart';
 import '../services/tutorial_service.dart';
 
@@ -119,12 +118,11 @@ class _HomeScreenState extends State<HomeScreen> {
               if (controller.text.trim().isEmpty) return;
               try {
                 await context.read<CloudProvider>().sendMessageToAdmin(auth.user!.uid, auth.user!.email!, controller.text.trim());
-                if (mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Message sent!')));
-                }
+                if (!context.mounted) return;
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Message sent!')));
               } catch (e) {
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+                if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
               }
             },
             child: const Text('Send'),

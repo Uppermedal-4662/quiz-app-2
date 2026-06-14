@@ -1,7 +1,7 @@
 import 'package:encrypt/encrypt.dart' as encrypt;
 import 'dart:math';
 import 'package:flutter/foundation.dart';
-import 'windows_secure_storage.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Service for handling secure storage of sensitive information
 /// and encryption/decryption of data.
@@ -15,15 +15,17 @@ class SecurityService {
   static const String _aesKeyName = 'aes_encryption_key';
   static const String _modelNameKey = 'gemini_model_name';
 
+  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+
   encrypt.Key? _encryptionKey;
   encrypt.Encrypter? _encrypter;
 
   Future<void> _writeSecure(String key, String value) async {
-    await WindowsSecureStorage.write(key, value);
+    await _storage.write(key: key, value: value);
   }
 
   Future<String?> _readSecure(String key) async {
-    return await WindowsSecureStorage.read(key);
+    return await _storage.read(key: key);
   }
 
   /// Initializes the SecurityService by loading or generating the AES key.
@@ -34,12 +36,10 @@ class SecurityService {
 
       if (storedKey == null) {
         // Requirement: Generate a random 32-character AES key if one doesn't exist.
-        // We generate a 32-character random string to be used as a 256-bit key.
         storedKey = _generateRandom32CharString();
         await _writeSecure(_aesKeyName, storedKey);
       }
 
-      // AES-256 requires a 32-byte key. 32 UTF-8 characters = 32 bytes (if ASCII).
       _encryptionKey = encrypt.Key.fromUtf8(storedKey);
       _encrypter = encrypt.Encrypter(encrypt.AES(_encryptionKey!));
     } catch (e) {
@@ -105,8 +105,6 @@ class SecurityService {
       final iv = encrypt.IV.fromSecureRandom(16);
       final encrypted = _encrypter!.encrypt(plainText, iv: iv);
       
-      // Combine IV and encrypted data with a separator for storage.
-      // Both are already base64 encoded by the encrypt package.
       return '${iv.base64}:${encrypted.base64}';
     } catch (e) {
       throw Exception('Encryption failed: $e');

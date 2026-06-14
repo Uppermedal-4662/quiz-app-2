@@ -48,12 +48,11 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
               if (controller.text.trim().isEmpty) return;
               try {
                 await context.read<CloudProvider>().sendMessageToAdmin(auth.user!.uid, auth.user!.email!, controller.text.trim());
-                if (mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Message sent!')));
-                }
+                if (!context.mounted) return;
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Message sent!')));
               } catch (e) {
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+                if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
               }
             },
             child: const Text('Send'),
@@ -95,10 +94,10 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
       ),
     );
 
+    if (!mounted) return;
     if (name != null && name.isNotEmpty) {
-      if (mounted) {
-        await Provider.of<QuizProvider>(context, listen: false).addClass(name);
-      }
+      final quizProvider = Provider.of<QuizProvider>(context, listen: false);
+      await quizProvider.addClass(name);
     }
   }
 
@@ -106,45 +105,40 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf'],
-      withData: false, // Don't load data directly to avoid large memory spikes
+      withData: false, 
     );
 
     if (result != null) {
       final file = File(result.files.single.path!);
       final fileSize = await file.length();
       
-      // PDF Size Validation (10MB limit)
+      if (!mounted) return;
+      final scaffoldMessenger = ScaffoldMessenger.of(context);
       if (fileSize > 10 * 1024 * 1024) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('PDF size exceeds 10MB limit. Please choose a smaller file.')),
-          );
-        }
+        scaffoldMessenger.showSnackBar(
+          const SnackBar(content: Text('PDF size exceeds 10MB limit. Please choose a smaller file.')),
+        );
         return;
       }
 
       final fileName = result.files.single.name;
       Uint8List? bytes = await file.readAsBytes();
       
-      if (mounted) {
-        try {
-          await Provider.of<QuizProvider>(context, listen: false)
-              .uploadPdf(classId, bytes, fileName);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('PDF uploaded and processed successfully')),
-            );
-          }
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Error: $e')),
-            );
-          }
-        } finally {
-          // Explicitly clear bytes from memory
-          bytes = null;
-        }
+      if (!mounted) return;
+      final quizProvider = Provider.of<QuizProvider>(context, listen: false);
+      try {
+        await quizProvider.uploadPdf(classId, bytes, fileName);
+        if (!mounted) return;
+        scaffoldMessenger.showSnackBar(
+          const SnackBar(content: Text('PDF uploaded and processed successfully')),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        scaffoldMessenger.showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      } finally {
+        bytes = null;
       }
     }
   }
@@ -173,10 +167,10 @@ class _ClassManagementScreenState extends State<ClassManagementScreen> {
       ),
     );
 
+    if (!mounted) return;
     if (newName != null && newName.isNotEmpty && newName != currentName) {
-      if (mounted) {
-        await Provider.of<QuizProvider>(context, listen: false).renameClass(id, newName);
-      }
+      final quizProvider = Provider.of<QuizProvider>(context, listen: false);
+      await quizProvider.renameClass(id, newName);
     }
   }
 

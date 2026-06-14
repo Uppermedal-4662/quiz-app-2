@@ -243,12 +243,11 @@ class _CloudBankManagementScreenState extends State<CloudBankManagementScreen> {
                     'options': opts,
                     'correct_answers': selectedAnswers,
                   });
-                  if (mounted) {
-                    Navigator.pop(context);
-                    _refresh();
-                  }
+                  if (!context.mounted) return;
+                  Navigator.pop(context);
+                  _refresh();
                 } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
                 }
               },
               child: const Text('Save Changes'),
@@ -270,10 +269,9 @@ class _CloudBankManagementScreenState extends State<CloudBankManagementScreen> {
           ElevatedButton(
             onPressed: () async {
               await context.read<CloudProvider>().deleteCloudQuestion(widget.bankId, questionId);
-              if (mounted) {
-                Navigator.pop(context);
-                _refresh();
-              }
+              if (!context.mounted) return;
+              Navigator.pop(context);
+              _refresh();
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
             child: const Text('Delete'),

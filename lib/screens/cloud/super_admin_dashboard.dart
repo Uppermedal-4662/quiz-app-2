@@ -78,14 +78,17 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   }
 
   Widget _buildUsersTab() {
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _usersFuture,
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('users').snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
         
-        final allUsers = snapshot.data ?? [];
+        final allUsers = snapshot.data?.docs.map((doc) => {'uid': doc.id, ...doc.data() as Map<String, dynamic>}).toList() ?? [];
+        
+        // Filter out super_admins and apply search query
         final users = allUsers.where((u) {
+          if (u['role'] == 'super_admin') return false;
           final email = (u['email'] ?? '').toString().toLowerCase();
           return email.contains(_userSearchQuery);
         }).toList();
@@ -106,27 +109,27 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
               ),
             ),
             Expanded(
-              child: ListView.builder(
-                itemCount: users.length,
-                itemBuilder: (context, index) {
-                  final user = users[index];
-                  if (user['role'] == 'super_admin') return const SizedBox.shrink();
+              child: users.isEmpty 
+                ? const Center(child: Text('No users found.'))
+                : ListView.builder(
+                    itemCount: users.length,
+                    itemBuilder: (context, index) {
+                      final user = users[index];
+                      final bool isDisabled = user['is_disabled'] ?? false;
 
-                  final bool isDisabled = user['is_disabled'] ?? false;
-
-                  return Card(
-                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    color: isDisabled ? Colors.red[50] : null,
-                    child: ListTile(
-                      leading: CircleAvatar(child: Text(user['role'][0].toUpperCase())),
-                      title: Text(user['email'] ?? 'No Email'),
-                      subtitle: Text('Role: ${user['role'].toUpperCase()} | Banks: ${(user['accessible_banks'] as List?)?.length ?? 0}'),
-                      trailing: const Icon(Icons.manage_accounts),
-                      onTap: () => _showManageUserDialog(user),
-                    ),
-                  );
-                },
-              ),
+                      return Card(
+                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        color: isDisabled ? Colors.red[50] : null,
+                        child: ListTile(
+                          leading: CircleAvatar(child: Text(user['role'][0].toUpperCase())),
+                          title: Text(user['email'] ?? 'No Email'),
+                          subtitle: Text('Role: ${user['role'].toUpperCase()} | Banks: ${(user['accessible_banks'] as List?)?.length ?? 0}'),
+                          trailing: const Icon(Icons.manage_accounts),
+                          onTap: () => _showManageUserDialog(user),
+                        ),
+                      );
+                    },
+                  ),
             ),
           ],
         );
@@ -215,8 +218,11 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                           tristate: true,
                           onChanged: (val) {
                             setDialogState(() {
-                              if (val == true) userBanks = _allBanks.map((b) => b['bank_id'] as String).toList();
-                              else userBanks = [];
+                              if (val == true) {
+                                userBanks = _allBanks.map((b) => b['bank_id'] as String).toList();
+                              } else {
+                                userBanks = [];
+                              }
                             });
                           },
                         ),
@@ -244,9 +250,15 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                   onChanged: (val) {
                                     setDialogState(() {
                                       if (val == true) {
-                                        for (var id in allIdsInCat) { if (!userBanks.contains(id)) userBanks.add(id); }
+                                        for (var id in allIdsInCat) {
+                                          if (!userBanks.contains(id)) {
+                                            userBanks.add(id);
+                                          }
+                                        }
                                       } else {
-                                        for (var id in allIdsInCat) { userBanks.remove(id); }
+                                        for (var id in allIdsInCat) {
+                                          userBanks.remove(id);
+                                        }
                                       }
                                     });
                                   },
@@ -262,8 +274,11 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                               value: userBanks.contains(bid),
                               onChanged: (v) {
                                 setDialogState(() {
-                                  if (v == true) userBanks.add(bid);
-                                  else userBanks.remove(bid);
+                                  if (v == true) {
+                                    userBanks.add(bid);
+                                  } else {
+                                    userBanks.remove(bid);
+                                  }
                                 });
                               },
                             );
@@ -277,9 +292,13 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                         onPressed: () async {
                           try {
                             await FirebaseAuth.instance.sendPasswordResetEmail(email: user['email']);
-                            if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Password reset email sent!')));
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Password reset email sent!')));
+                            }
                           } catch (e) {
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                            }
                           }
                         },
                         icon: const Icon(Icons.lock_reset),
@@ -303,12 +322,14 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                       canAccessQuizzes: canAccessQuizzes,
                       canViewInbox: canViewInbox,
                     );
-                    if (mounted) {
+                    if (context.mounted) {
                       Navigator.pop(context);
                       _refresh();
                     }
                   } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                    }
                   }
                 },
                 child: const Text('Save Changes'),
@@ -356,12 +377,13 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
               const SizedBox(height: 32),
               ElevatedButton(
                 onPressed: () async {
+                  final scaffoldMessenger = ScaffoldMessenger.of(context);
                   await cloud.updateAppConfig({
                     'greeting_message': greetingController.text,
                     'contact_info': contactController.text,
                     'super_admin_email': auth.user?.email,
                   });
-                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Config updated!')));
+                  scaffoldMessenger.showSnackBar(const SnackBar(content: Text('Config updated!')));
                 },
                 child: const Text('SAVE CONFIG'),
               ),

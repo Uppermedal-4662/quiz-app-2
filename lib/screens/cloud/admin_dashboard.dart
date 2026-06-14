@@ -70,10 +70,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
 
     if (result == true && nameController.text.isNotEmpty) {
+      if (!mounted) return;
       final cloud = context.read<CloudProvider>();
       final auth = context.read<AuthService>();
       await cloud.createQuestionBank(nameController.text, descController.text, catController.text, auth.user!.uid);
-      _refresh();
+      if (mounted) _refresh();
     }
   }
 
@@ -92,8 +93,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
 
     if (newName != null && newName.isNotEmpty && newName != bank['name']) {
-      await context.read<CloudProvider>().updateQuestionBank(bank['bank_id'], {'name': newName});
-      _refresh();
+      if (!mounted) return;
+      final cloud = context.read<CloudProvider>();
+      await cloud.updateQuestionBank(bank['bank_id'], {'name': newName});
+      if (mounted) _refresh();
     }
   }
 
@@ -101,8 +104,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
     final result = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
     if (result != null) {
       final Uint8List bytes = result.files.single.bytes ?? await File(result.files.single.path!).readAsBytes();
+      
+      if (!mounted) return;
       final quizProvider = context.read<QuizProvider>();
       final cloud = context.read<CloudProvider>();
+      final scaffoldMessenger = ScaffoldMessenger.of(context);
 
       setState(() {
         _isProcessing = true;
@@ -112,15 +118,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
       try {
         final questions = await quizProvider.geminiExtractQuestions(
           bytes,
-          onProgress: (status) => setState(() => _uploadStatus = status),
+          onProgress: (status) {
+            if (mounted) setState(() => _uploadStatus = status);
+          },
         );
         
-        setState(() => _uploadStatus = "Uploading ${questions.length} questions to cloud...");
+        if (mounted) {
+          setState(() => _uploadStatus = "Uploading ${questions.length} questions to cloud...");
+        }
         await cloud.uploadQuestionsToCloud(bankId, questions);
         
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Questions uploaded to Cloud!')));
+        scaffoldMessenger.showSnackBar(const SnackBar(content: Text('Questions uploaded to Cloud!')));
       } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+        scaffoldMessenger.showSnackBar(SnackBar(content: Text('Error: $e')));
       } finally {
         if (mounted) {
           setState(() {

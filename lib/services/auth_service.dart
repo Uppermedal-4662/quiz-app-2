@@ -69,10 +69,12 @@ class AuthService extends ChangeNotifier {
     if (_user == null) return;
     
     try {
+      debugPrint('Setting up user session for: ${_user!.uid}');
       final docRef = _firestore.collection('users').doc(_user!.uid);
       final doc = await docRef.get();
 
       if (!doc.exists) {
+        debugPrint('User document does not exist. Creating...');
         // BOOTSTRAP LOGIC: If this is the FIRST user ever, make them Super Admin
         final usersSnapshot = await _firestore.collection('users').limit(1).get();
         final role = usersSnapshot.docs.isEmpty ? 'super_admin' : 'user';
@@ -83,11 +85,19 @@ class AuthService extends ChangeNotifier {
           'accessible_banks': [],
           'current_device_id': _currentDeviceId,
           'created_at': FieldValue.serverTimestamp(),
+          'is_disabled': false,
+          'can_message': true,
+          'can_access_quizzes': true,
         });
         _role = _parseRole(role);
+        debugPrint('Created user doc with role: $role');
       } else {
+        debugPrint('User document exists. Updating device ID.');
         // Update the current device ID in Firestore for this login
-        await docRef.update({'current_device_id': _currentDeviceId});
+        await docRef.update({
+          'current_device_id': _currentDeviceId,
+          'email': _user!.email, // Keep email updated
+        });
         _role = _parseRole(doc.data()!['role']);
       }
 
@@ -98,7 +108,7 @@ class AuthService extends ChangeNotifier {
           final cloudDeviceId = data['current_device_id'] as String?;
           
           if (cloudDeviceId != null && cloudDeviceId != _currentDeviceId) {
-            // Logged in on another device!
+            debugPrint('Force logout triggered: Device ID mismatch');
             _logoutReason = "Logged in on another device.";
             signOut();
           }
@@ -106,7 +116,8 @@ class AuthService extends ChangeNotifier {
       });
 
     } catch (e) {
-      debugPrint('Error setting up user session: $e');
+      debugPrint('CRITICAL: Error setting up user session: $e');
+      // If we failed to fetch/setup, default to user role but keep loading state
       _role = UserRole.user;
     } finally {
       _isLoading = false;

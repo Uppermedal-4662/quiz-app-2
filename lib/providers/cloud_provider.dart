@@ -59,12 +59,15 @@ class CloudProvider with ChangeNotifier {
     final now = DateTime.now();
     final startOfDay = DateTime(now.year, now.month, now.day);
     
+    // Fetch all messages from today. 
+    // We avoid .where('sender_uid') here to bypass the need for a composite index.
     final snapshot = await _firestore.collection('messages')
-        .where('sender_uid', isEqualTo: userId)
         .where('timestamp', isGreaterThanOrEqualTo: startOfDay)
         .get();
     
-    if (snapshot.docs.length >= 5) {
+    final userMessagesCount = snapshot.docs.where((doc) => doc.data()['sender_uid'] == userId).length;
+    
+    if (userMessagesCount >= 5) {
       throw Exception('Daily message limit reached (5 per day). Please try again tomorrow.');
     }
 

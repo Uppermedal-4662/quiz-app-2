@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:provider/provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -201,12 +200,11 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
 
                 try {
                   await context.read<QuizProvider>().updateQuestion(qData['id'], text, opts, selectedAnswers);
-                  if (mounted) {
-                    Navigator.pop(context);
-                    _refresh();
-                  }
+                  if (!context.mounted) return;
+                  Navigator.pop(context);
+                  _refresh();
                 } catch (e) {
-                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
                 }
               },
               child: const Text('Save Fix'),
@@ -335,7 +333,7 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
                                   ],
                                 ),
                               );
-                            }).toList(),
+                            }),
                             const SizedBox(height: 16),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.end,

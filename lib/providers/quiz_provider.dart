@@ -485,12 +485,19 @@ class QuizProvider with ChangeNotifier {
       List<Map<String, dynamic>>? targetList;
 
       if (newQ.isNotEmpty) {
-        if (r < 0.65 && newQ.isNotEmpty) targetList = newQ;
-        else if (r < 0.90 && wrongQ.isNotEmpty) targetList = wrongQ;
-        else if (rightQ.isNotEmpty) targetList = rightQ;
+        if (r < 0.65 && newQ.isNotEmpty) {
+          targetList = newQ;
+        } else if (r < 0.90 && wrongQ.isNotEmpty) {
+          targetList = wrongQ;
+        } else if (rightQ.isNotEmpty) {
+          targetList = rightQ;
+        }
       } else {
-        if (r < 0.60 && wrongQ.isNotEmpty) targetList = wrongQ;
-        else if (rightQ.isNotEmpty) targetList = rightQ;
+        if (r < 0.60 && wrongQ.isNotEmpty) {
+          targetList = wrongQ;
+        } else if (rightQ.isNotEmpty) {
+          targetList = rightQ;
+        }
       }
 
       targetList ??= pool;

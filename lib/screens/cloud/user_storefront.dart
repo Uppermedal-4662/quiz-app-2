@@ -55,7 +55,48 @@ class _UserStorefrontState extends State<UserStorefront> {
     return await cloud.getAccessibleBanks(bankIds, adminUid: auth.user?.uid);
   }
 
-  // ... (rest of methods)
+  Future<void> _downloadBank(Map<String, dynamic> bank, {int? existingLocalId}) async {
+    setState(() => _isDownloading = true);
+    final cloud = context.read<CloudProvider>();
+    final quiz = context.read<QuizProvider>();
+
+    try {
+      final questions = await cloud.downloadBankQuestions(bank['bank_id']);
+      
+      int classId;
+      if (existingLocalId != null) {
+        classId = existingLocalId;
+        await quiz.clearQuestionsForClass(classId);
+        await quiz.updateClassSync(classId, (bank['updated_at'] as Timestamp).toDate().toIso8601String());
+      } else {
+        await quiz.addClass(
+          bank['name'], 
+          cloudBankId: bank['bank_id'], 
+          cloudUpdatedAt: (bank['updated_at'] as Timestamp).toDate().toIso8601String()
+        );
+        // Refresh classes to get the new ID
+        await quiz.loadClasses();
+        final newClass = quiz.classes.firstWhere((c) => c['cloud_bank_id'] == bank['bank_id']);
+        classId = newClass['id'];
+      }
+
+      await quiz.importManualQuestions(classId, questions);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Successfully downloaded ${bank['name']}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Download failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isDownloading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
