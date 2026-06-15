@@ -11,25 +11,25 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
     
+    function hasProfile() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    
     function isSuperAdmin() {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-        getProfile().get('role', 'user') == 'super_admin';
+      return isSignedIn() && hasProfile() && getProfile().get('role', 'user') == 'super_admin';
     }
     
     function isAdmin() {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-        getProfile().get('role', 'user') == 'admin';
+      return isSignedIn() && hasProfile() && getProfile().get('role', 'user') == 'admin';
     }
 
     // --- USER PROFILES ---
     match /users/{userId} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
+      allow read: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin() || isAdmin());
       
       allow create: if isSignedIn() &&
         request.auth.uid == userId &&
-        request.resource.data.get('role', 'user') == 'user' && // STOPS SUPER ADMIN SPOOFING
+        request.resource.data.get('role', 'user') == 'user' &&
         request.resource.data.get('accessible_banks', {}) == {};
         
       allow update: if isSuperAdmin() || (
@@ -38,13 +38,15 @@ service cloud.firestore {
         !request.resource.data.diff(resource.data).affectedKeys()
           .hasAny(['role', 'is_disabled', 'accessible_banks', 'can_view_inbox', 'can_message', 'can_access_quizzes'])
       );
+
+      allow delete: if isSuperAdmin();
     }
 
     // --- QUESTION BANKS ---
     match /question_banks/{bankId} {
       allow read: if isSuperAdmin() || (
         isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        hasProfile() && 
         getProfile().get('accessible_banks', {})[bankId] == true
       ) || (
         resource != null && 
@@ -53,18 +55,15 @@ service cloud.firestore {
       
       allow create: if isSuperAdmin() || isAdmin();
       
-      // Allow Admins to manage all banks, or users to manage their own
       allow update, delete: if isSuperAdmin() || isAdmin() || (
         resource != null && 
         resource.data.get('created_by', '') == request.auth.uid
       );
 
-      // --- CLOUD QUESTIONS (Sub-collection) ---
-      // Fixed match path for better scoping
       match /cloud_questions/{qId} {
         allow read: if isSuperAdmin() || isAdmin() || (
           isSignedIn() &&
-          exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          hasProfile() && 
           getProfile().get('accessible_banks', {})[bankId] == true
         ) || 
         get(/databases/$(database)/documents/question_banks/$(bankId)).data.get('created_by', '') == request.auth.uid;
@@ -82,17 +81,23 @@ service cloud.firestore {
 
     // --- MESSAGES ---
     match /messages/{messageId} {
+      // Allow creation if signed in and NOT specifically banned (if profile exists)
       allow create: if isSignedIn() && 
-        request.resource.data.get('sender_uid', '') == request.auth.uid;
+        request.resource.data.get('sender_uid', '') == request.auth.uid &&
+        (!hasProfile() || getProfile().get('can_message', true) == true);
       
-      allow read, update: if isSuperAdmin() || (
-        resource != null && 
+      // Allow read if sender or admin-with-inbox-access
+      allow read: if (
+        isSignedIn() && 
         resource.data.get('sender_uid', '') == request.auth.uid
       ) || (
-        isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        getProfile().get('can_view_inbox', false) == true
+        isSuperAdmin() || 
+        isAdmin() || 
+        (hasProfile() && getProfile().get('can_view_inbox', false) == true)
       );
+
+      allow update: if isSuperAdmin() || isAdmin();
+      allow delete: if isSuperAdmin();
     }
   }
 }

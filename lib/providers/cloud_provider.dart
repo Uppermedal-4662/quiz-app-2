@@ -51,8 +51,21 @@ class CloudProvider with ChangeNotifier {
   // --- Messaging (Rate Limited) ---
 
   Future<void> sendMessageToAdmin(String userId, String email, String message) async {
-    final userDoc = await _firestore.collection('users').doc(userId).get();
-    if (userDoc.exists && userDoc.data()?['can_message'] == false) {
+    final userDocRef = _firestore.collection('users').doc(userId);
+    final userDoc = await userDocRef.get();
+    
+    // Lazy-init user document if it doesn't exist to prevent permission errors
+    if (!userDoc.exists) {
+      await userDocRef.set({
+        'email': email,
+        'role': 'user',
+        'accessible_banks': {},
+        'created_at': FieldValue.serverTimestamp(),
+        'is_disabled': false,
+        'can_message': true,
+        'can_access_quizzes': true,
+      });
+    } else if (userDoc.data()?['can_message'] == false) {
       throw Exception('Your messaging privileges have been suspended by an administrator.');
     }
 

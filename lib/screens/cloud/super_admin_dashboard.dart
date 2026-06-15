@@ -188,8 +188,9 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     bool canAccessQuizzes = user['can_access_quizzes'] ?? true;
     bool canViewInbox = user['can_view_inbox'] ?? false;
 
-    // Local dialog state for filtering banks
+    // Local dialog state for filtering banks and deletion confirmation
     String bankFilter = "";
+    bool isConfirmingDelete = false;
 
     showDialog(
       context: context,
@@ -349,13 +350,45 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     ),
                     const SizedBox(height: 16),
                     const Divider(color: Colors.red),
-                    Center(
-                      child: TextButton.icon(
-                        onPressed: () => _confirmDeleteUser(user['uid'], user['email']),
-                        icon: const Icon(Icons.delete_forever, color: Colors.red),
-                        label: const Text('DELETE USER DATA', style: TextStyle(color: Colors.red)),
+                    if (!isConfirmingDelete)
+                      Center(
+                        child: TextButton.icon(
+                          onPressed: () => setDialogState(() => isConfirmingDelete = true),
+                          icon: const Icon(Icons.delete_forever, color: Colors.red),
+                          label: const Text('DELETE USER DATA', style: TextStyle(color: Colors.red)),
+                        ),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: Colors.red[50], borderRadius: BorderRadius.circular(8)),
+                        child: Column(
+                          children: [
+                            const Text('Permanently delete Firestore record?', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 12)),
+                            const SizedBox(height: 8),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                              children: [
+                                TextButton(
+                                  onPressed: () => setDialogState(() => isConfirmingDelete = false),
+                                  child: const Text('Cancel'),
+                                ),
+                                ElevatedButton(
+                                  onPressed: () async {
+                                    await cloud.deleteUserData(user['uid']);
+                                    if (context.mounted) {
+                                      Navigator.pop(context);
+                                      _refresh();
+                                    }
+                                  },
+                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                                  child: const Text('CONFIRM DELETE', style: TextStyle(color: Colors.white)),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -392,29 +425,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     );
   }
 
-  void _confirmDeleteUser(String uid, String? email) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete User Data?'),
-        content: Text('This will permanently delete the Firestore record for $email. This is useful for cleaning up deleted Auth accounts.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () async {
-              await context.read<CloudProvider>().deleteUserData(uid);
-              if (mounted) {
-                Navigator.pop(context); // Pop confirm
-                Navigator.pop(context); // Pop manage dialog
-                _refresh();
-              }
-            },
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-  }
+  // Removed _confirmDeleteUser as it is now inline in _showManageUserDialog
 
   Widget _buildConfigTab() {
     final cloud = context.read<CloudProvider>();
