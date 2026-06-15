@@ -59,13 +59,13 @@ class CloudProvider with ChangeNotifier {
     final now = DateTime.now();
     final startOfDay = DateTime(now.year, now.month, now.day);
     
-    // Fetch only this user's messages from today to comply with security rules.
+    // Simplified query: Fetch all messages from today. 
+    // We then filter by userId in memory to avoid needing a composite index (sender_uid + timestamp).
     final snapshot = await _firestore.collection('messages')
-        .where('sender_uid', isEqualTo: userId)
         .where('timestamp', isGreaterThanOrEqualTo: startOfDay)
         .get();
     
-    final userMessagesCount = snapshot.docs.length;
+    final userMessagesCount = snapshot.docs.where((doc) => doc.data()['sender_uid'] == userId).length;
     
     if (userMessagesCount >= 5) {
       throw Exception('Daily message limit reached (5 per day). Please try again tomorrow.');
@@ -78,6 +78,10 @@ class CloudProvider with ChangeNotifier {
       'timestamp': FieldValue.serverTimestamp(),
       'reply': null,
     });
+  }
+
+  Future<void> deleteUserData(String uid) async {
+    await _firestore.collection('users').doc(uid).delete();
   }
 
   Future<void> replyToMessage(String messageId, String adminEmail, String replyText) async {

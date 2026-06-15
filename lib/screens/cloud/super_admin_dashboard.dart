@@ -132,18 +132,29 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                       final user = users[index];
                       final bool isDisabled = user['is_disabled'] ?? false;
                       final String role = user['role'] ?? 'user';
+                      
+                      // Safely handle bank count for both old List and new Map formats
+                      int bankCount = 0;
+                      final rawBanks = user['accessible_banks'];
+                      if (rawBanks is Map) {
+                        bankCount = rawBanks.values.where((v) => v == true).length;
+                      } else if (rawBanks is List) {
+                        bankCount = rawBanks.length;
+                      }
 
                       return Card(
                         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         color: isDisabled ? Colors.red[50] : null,
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         child: ListTile(
                           leading: CircleAvatar(
-                            backgroundColor: role == 'super_admin' ? Colors.amber : null,
-                            child: Text(role[0].toUpperCase()),
+                            backgroundColor: role == 'super_admin' ? Colors.amber : Colors.blue[100],
+                            child: Text(role[0].toUpperCase(), style: TextStyle(color: role == 'super_admin' ? Colors.black : Colors.blue[900])),
                           ),
-                          title: Text(user['email'] ?? 'No Email'),
-                          subtitle: Text('Role: ${role.toUpperCase()} | Banks: ${(user['accessible_banks'] as List?)?.length ?? 0}'),
-                          trailing: const Icon(Icons.manage_accounts),
+                          title: Text(user['email'] ?? 'No Email', style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text('Role: ${role.toUpperCase()} | Banks: $bankCount'),
+                          trailing: const Icon(Icons.chevron_right),
                           onTap: () => _showManageUserDialog(user),
                         ),
                       );
@@ -158,7 +169,18 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
 
   void _showManageUserDialog(Map<String, dynamic> user) async {
     final cloud = context.read<CloudProvider>();
-    Map<String, bool> userBanks = Map<String, bool>.from(user['accessible_banks'] ?? {});
+    
+    // Safety check: Convert old List format to Map format if necessary
+    final rawBanks = user['accessible_banks'];
+    Map<String, bool> userBanks = {};
+    if (rawBanks is Map) {
+      userBanks = Map<String, bool>.from(rawBanks);
+    } else if (rawBanks is List) {
+      for (var id in rawBanks) {
+        userBanks[id.toString()] = true;
+      }
+    }
+
     String userRole = user['role'] ?? 'user';
     
     bool isDisabled = user['is_disabled'] ?? false;
@@ -195,6 +217,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     const Text('Account Status', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
                     SwitchListTile(
                       title: const Text('Disable Account'),
+                      subtitle: const Text('Blocks login and access', style: TextStyle(fontSize: 10)),
                       value: isDisabled,
                       onChanged: (v) => setDialogState(() => isDisabled = v),
                     ),
@@ -324,6 +347,15 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                         label: const Text('Send Password Reset Link'),
                       ),
                     ),
+                    const SizedBox(height: 16),
+                    const Divider(color: Colors.red),
+                    Center(
+                      child: TextButton.icon(
+                        onPressed: () => _confirmDeleteUser(user['uid'], user['email']),
+                        icon: const Icon(Icons.delete_forever, color: Colors.red),
+                        label: const Text('DELETE USER DATA', style: TextStyle(color: Colors.red)),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -356,6 +388,30 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
             ],
           );
         },
+      ),
+    );
+  }
+
+  void _confirmDeleteUser(String uid, String? email) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete User Data?'),
+        content: Text('This will permanently delete the Firestore record for $email. This is useful for cleaning up deleted Auth accounts.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () async {
+              await context.read<CloudProvider>().deleteUserData(uid);
+              if (mounted) {
+                Navigator.pop(context); // Pop confirm
+                Navigator.pop(context); // Pop manage dialog
+                _refresh();
+              }
+            },
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
       ),
     );
   }

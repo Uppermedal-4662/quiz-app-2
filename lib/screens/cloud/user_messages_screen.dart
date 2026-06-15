@@ -78,7 +78,8 @@ class _UserMessagesScreenState extends State<UserMessagesScreen> {
         stream: FirebaseFirestore.instance
             .collection('messages')
             .where('sender_uid', isEqualTo: auth.user!.uid)
-            .orderBy('timestamp', descending: true)
+            // Removed orderBy to avoid composite index requirements. 
+            // We sort in memory instead.
             .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -86,40 +87,19 @@ class _UserMessagesScreenState extends State<UserMessagesScreen> {
           }
 
           if (snapshot.hasError) {
-            if (snapshot.error.toString().contains('index')) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24.0),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.warning_amber_rounded, size: 64, color: Colors.orange),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Database Index Required',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Cloud messaging requires a composite index in Firestore. Please ask the administrator to check the Firestore console.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                      const SizedBox(height: 24),
-                      Text(
-                        'Error Details: ${snapshot.error}',
-                        style: const TextStyle(fontSize: 10, color: Colors.red),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }
             return Center(child: Text('Error: ${snapshot.error}'));
           }
 
-          final messages = snapshot.data?.docs ?? [];
+          // Sort in memory by timestamp descending
+          final docs = snapshot.data?.docs ?? [];
+          final messages = docs.toList();
+          messages.sort((a, b) {
+            final t1 = (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+            final t2 = (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+            if (t1 == null) return 1;
+            if (t2 == null) return -1;
+            return t2.compareTo(t1);
+          });
 
           if (messages.isEmpty) {
             return const Center(
