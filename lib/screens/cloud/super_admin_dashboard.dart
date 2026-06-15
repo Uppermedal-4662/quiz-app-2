@@ -15,12 +15,17 @@ class SuperAdminDashboard extends StatefulWidget {
 
 class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
   List<Map<String, dynamic>> _allBanks = [];
+  late Future<List<Map<String, dynamic>>> _inboxFuture;
+  late Future<Map<String, dynamic>> _configFuture;
   
   // Search state
   final TextEditingController _userSearchController = TextEditingController();
   final TextEditingController _inboxSearchController = TextEditingController();
   String _userSearchQuery = "";
   String _inboxSearchQuery = "";
+
+  // Map to store controllers for inbox replies to avoid recreation during rebuilds
+  final Map<String, TextEditingController> _replyControllers = {};
 
   @override
   void initState() {
@@ -34,10 +39,24 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     });
   }
 
+  @override
+  void dispose() {
+    _userSearchController.dispose();
+    _inboxSearchController.dispose();
+    for (var controller in _replyControllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
   void _refresh() {
-    context.read<CloudProvider>().getAllBanks().then((banks) {
+    final cloud = context.read<CloudProvider>();
+    cloud.getAllBanks().then((banks) {
       if (mounted) setState(() => _allBanks = banks);
     });
+    _inboxFuture = cloud.getAdminInbox();
+    _configFuture = cloud.getAppConfig();
+    setState(() {});
   }
 
   @override
@@ -83,9 +102,8 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
         
         final allUsers = snapshot.data?.docs.map((doc) => {'uid': doc.id, ...doc.data() as Map<String, dynamic>}).toList() ?? [];
         
-        // Filter out super_admins and apply search query
+        // Apply search query
         final users = allUsers.where((u) {
-          if (u['role'] == 'super_admin') return false;
           final email = (u['email'] ?? '').toString().toLowerCase();
           return email.contains(_userSearchQuery);
         }).toList();
@@ -113,14 +131,18 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     itemBuilder: (context, index) {
                       final user = users[index];
                       final bool isDisabled = user['is_disabled'] ?? false;
+                      final String role = user['role'] ?? 'user';
 
                       return Card(
                         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         color: isDisabled ? Colors.red[50] : null,
                         child: ListTile(
-                          leading: CircleAvatar(child: Text(user['role'][0].toUpperCase())),
+                          leading: CircleAvatar(
+                            backgroundColor: role == 'super_admin' ? Colors.amber : null,
+                            child: Text(role[0].toUpperCase()),
+                          ),
                           title: Text(user['email'] ?? 'No Email'),
-                          subtitle: Text('Role: ${user['role'].toUpperCase()} | Banks: ${(user['accessible_banks'] as List?)?.length ?? 0}'),
+                          subtitle: Text('Role: ${role.toUpperCase()} | Banks: ${(user['accessible_banks'] as List?)?.length ?? 0}'),
                           trailing: const Icon(Icons.manage_accounts),
                           onTap: () => _showManageUserDialog(user),
                         ),
@@ -136,7 +158,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
 
   void _showManageUserDialog(Map<String, dynamic> user) async {
     final cloud = context.read<CloudProvider>();
-    List<String> userBanks = List<String>.from(user['accessible_banks'] ?? []);
+    Map<String, bool> userBanks = Map<String, bool>.from(user['accessible_banks'] ?? {});
     String userRole = user['role'] ?? 'user';
     
     bool isDisabled = user['is_disabled'] ?? false;
@@ -191,10 +213,10 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     DropdownButton<String>(
                       value: userRole,
                       isExpanded: true,
-                      items: ['user', 'admin'].map((r) => DropdownMenuItem(value: r, child: Text(r.toUpperCase()))).toList(),
+                      items: ['user', 'admin', 'super_admin'].map((r) => DropdownMenuItem(value: r, child: Text(r.toUpperCase()))).toList(),
                       onChanged: (val) => setDialogState(() => userRole = val!),
                     ),
-                    if (userRole == 'admin')
+                    if (userRole == 'admin' || userRole == 'super_admin')
                       CheckboxListTile(
                         title: const Text('Grant Inbox Access'),
                         value: canViewInbox,
@@ -211,14 +233,16 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                     Row(
                       children: [
                         Checkbox(
-                          value: _allBanks.isNotEmpty && userBanks.length == _allBanks.length,
+                          value: _allBanks.isNotEmpty && userBanks.length == _allBanks.length && userBanks.values.every((v) => v),
                           tristate: true,
                           onChanged: (val) {
                             setDialogState(() {
                               if (val == true) {
-                                userBanks = _allBanks.map((b) => b['bank_id'] as String).toList();
+                                for (var b in _allBanks) {
+                                  userBanks[b['bank_id']] = true;
+                                }
                               } else {
-                                userBanks = [];
+                                userBanks.clear();
                               }
                             });
                           },
@@ -230,7 +254,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                       final category = entry.key;
                       final banksInCat = entry.value;
                       final allIdsInCat = banksInCat.map((b) => b['bank_id'] as String).toList();
-                      bool allSelected = allIdsInCat.every((id) => userBanks.contains(id));
+                      bool allSelected = allIdsInCat.every((id) => userBanks[id] == true);
 
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -248,9 +272,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                     setDialogState(() {
                                       if (val == true) {
                                         for (var id in allIdsInCat) {
-                                          if (!userBanks.contains(id)) {
-                                            userBanks.add(id);
-                                          }
+                                          userBanks[id] = true;
                                         }
                                       } else {
                                         for (var id in allIdsInCat) {
@@ -268,11 +290,11 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                             final bid = bank['bank_id'] as String;
                             return CheckboxListTile(
                               title: Text(bank['name']),
-                              value: userBanks.contains(bid),
+                              value: userBanks[bid] == true,
                               onChanged: (v) {
                                 setDialogState(() {
                                   if (v == true) {
-                                    userBanks.add(bid);
+                                    userBanks[bid] = true;
                                   } else {
                                     userBanks.remove(bid);
                                   }
@@ -345,7 +367,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     final contactController = TextEditingController();
 
     return FutureBuilder<Map<String, dynamic>>(
-      future: cloud.getAppConfig(),
+      future: _configFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         final config = snapshot.data ?? {};
@@ -398,7 +420,7 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
     final auth = context.read<AuthService>();
 
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: cloud.getAdminInbox(),
+      future: _inboxFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         final allMessages = snapshot.data ?? [];
@@ -427,56 +449,65 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
             Expanded(
               child: messages.isEmpty 
                 ? const Center(child: Text('No messages found.'))
-                : ListView.builder(
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      final msg = messages[index];
-                      final date = (msg['timestamp'] as dynamic)?.toDate() ?? DateTime.now();
-                      final reply = msg['reply'] as String?;
-                      final replyController = TextEditingController();
+                : RefreshIndicator(
+                    onRefresh: () async => _refresh(),
+                    child: ListView.builder(
+                      itemCount: messages.length,
+                      itemBuilder: (context, index) {
+                        final msg = messages[index];
+                        final date = (msg['timestamp'] as dynamic)?.toDate() ?? DateTime.now();
+                        final reply = msg['reply'] as String?;
+                        final msgId = msg['id'] as String;
+                        
+                        // Get or create controller for this message
+                        if (!_replyControllers.containsKey(msgId)) {
+                          _replyControllers[msgId] = TextEditingController();
+                        }
+                        final replyController = _replyControllers[msgId]!;
 
-                      return Card(
-                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(msg['sender_email'] ?? 'Anonymous', style: const TextStyle(fontWeight: FontWeight.bold)),
-                                  Text(DateFormat('MMM d, HH:mm').format(date), style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Text(msg['message'] ?? ''),
-                              const Divider(height: 24),
-                              if (reply != null) ...[
-                                const Text('Admin Reply:', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 12)),
-                                Text(reply, style: const TextStyle(fontStyle: FontStyle.italic)),
-                                const SizedBox(height: 4),
-                                Text('By ${msg['replied_by']} on ${DateFormat('MMM d, HH:mm').format((msg['replied_at'] as dynamic).toDate())}', style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                              ] else ...[
+                        return Card(
+                          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
                                 Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Expanded(child: TextField(controller: replyController, decoration: const InputDecoration(hintText: 'Type reply...', isDense: true))),
-                                    IconButton(
-                                      onPressed: () async {
-                                        if (replyController.text.trim().isEmpty) return;
-                                        await cloud.replyToMessage(msg['id'], auth.user!.email!, replyController.text.trim());
-                                        setState(() {});
-                                      },
-                                      icon: const Icon(Icons.send, color: Colors.blue),
-                                    ),
+                                    Text(msg['sender_email'] ?? 'Anonymous', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                    Text(DateFormat('MMM d, HH:mm').format(date), style: const TextStyle(fontSize: 10, color: Colors.grey)),
                                   ],
                                 ),
+                                const SizedBox(height: 8),
+                                Text(msg['message'] ?? ''),
+                                const Divider(height: 24),
+                                if (reply != null) ...[
+                                  const Text('Admin Reply:', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 12)),
+                                  Text(reply, style: const TextStyle(fontStyle: FontStyle.italic)),
+                                  const SizedBox(height: 4),
+                                  Text('By ${msg['replied_by']} on ${DateFormat('MMM d, HH:mm').format((msg['replied_at'] as dynamic).toDate())}', style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                                ] else ...[
+                                  Row(
+                                    children: [
+                                      Expanded(child: TextField(controller: replyController, decoration: const InputDecoration(hintText: 'Type reply...', isDense: true))),
+                                      IconButton(
+                                        onPressed: () async {
+                                          if (replyController.text.trim().isEmpty) return;
+                                          await cloud.replyToMessage(msgId, auth.user!.email!, replyController.text.trim());
+                                          _refresh();
+                                        },
+                                        icon: const Icon(Icons.send, color: Colors.blue),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
             ),
           ],

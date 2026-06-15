@@ -30,7 +30,7 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
         request.auth.uid == userId &&
         request.resource.data.get('role', 'user') == 'user' && // STOPS SUPER ADMIN SPOOFING
-        request.resource.data.get('accessible_banks', []) == [];
+        request.resource.data.get('accessible_banks', {}) == {};
         
       allow update: if isSuperAdmin() || (
         isSignedIn() && 
@@ -45,7 +45,7 @@ service cloud.firestore {
       allow read: if isSuperAdmin() || (
         isSignedIn() &&
         exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-        bankId in getProfile().get('accessible_banks', [])
+        getProfile().get('accessible_banks', {})[bankId] == true
       ) || (
         resource != null && 
         resource.data.get('created_by', '') == request.auth.uid
@@ -65,7 +65,7 @@ service cloud.firestore {
         allow read: if isSuperAdmin() || isAdmin() || (
           isSignedIn() &&
           exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          bankId in getProfile().get('accessible_banks', [])
+          getProfile().get('accessible_banks', {})[bankId] == true
         ) || 
         get(/databases/$(database)/documents/question_banks/$(bankId)).data.get('created_by', '') == request.auth.uid;
           

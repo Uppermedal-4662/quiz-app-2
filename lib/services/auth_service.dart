@@ -75,14 +75,13 @@ class AuthService extends ChangeNotifier {
 
       if (!doc.exists) {
         debugPrint('User document does not exist. Creating...');
-        // BOOTSTRAP LOGIC: If this is the FIRST user ever, make them Super Admin
-        final usersSnapshot = await _firestore.collection('users').limit(1).get();
-        final role = usersSnapshot.docs.isEmpty ? 'super_admin' : 'user';
+        // Default role is always 'user'. Super Admin must be assigned via Firebase Console or Admin Script.
+        const role = 'user';
 
         await docRef.set({
           'email': _user!.email,
           'role': role,
-          'accessible_banks': [],
+          'accessible_banks': {}, // Changed from [] to {} to avoid Firestore array limits in rules
           'current_device_id': _currentDeviceId,
           'created_at': FieldValue.serverTimestamp(),
           'is_disabled': false,

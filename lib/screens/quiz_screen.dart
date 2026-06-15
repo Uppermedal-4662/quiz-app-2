@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -181,19 +182,16 @@ class _QuizScreenState extends State<QuizScreen> {
               ),
               const SizedBox(height: 24),
               const Text('3. Timer Mode', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              ...TimerMode.values.map((mode) => ListTile(
+              ...TimerMode.values.map((mode) => RadioListTile<TimerMode>(
                 title: Text(mode.toString().split('.').last.toUpperCase()),
                 subtitle: Text(_getTimerDescription(mode)),
-                leading: Radio<TimerMode>(
-                  value: mode,
-                  groupValue: _selectedTimerMode,
-                  onChanged: (v) {
-                    if (v != null) {
-                      setState(() => _selectedTimerMode = v);
-                    }
-                  },
-                ),
-                onTap: () => setState(() => _selectedTimerMode = mode),
+                value: mode,
+                groupValue: _selectedTimerMode,
+                onChanged: (v) {
+                  if (v != null) {
+                    setState(() => _selectedTimerMode = v);
+                  }
+                },
               )),
               if (_selectedTimerMode != TimerMode.none) ...[
                 const SizedBox(height: 24),

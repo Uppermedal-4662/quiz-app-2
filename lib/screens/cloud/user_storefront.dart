@@ -41,18 +41,18 @@ class _UserStorefrontState extends State<UserStorefront> {
       return await cloud.getAllBanks();
     }
     
-    List<String> bankIds = [];
+    Map<String, dynamic> bankPermissions = {};
     try {
       final doc = await FirebaseFirestore.instance.collection('users').doc(auth.user?.uid).get();
       if (doc.exists) {
-        bankIds = List<String>.from(doc.data()?['accessible_banks'] ?? []);
+        bankPermissions = Map<String, dynamic>.from(doc.data()?['accessible_banks'] ?? {});
       }
     } catch (e) {
       debugPrint('Error fetching user document: $e');
       // If we can't read the user doc, we still allow Admins to see their own banks.
     }
     
-    return await cloud.getAccessibleBanks(bankIds, adminUid: auth.user?.uid);
+    return await cloud.getAccessibleBanks(bankPermissions, adminUid: auth.user?.uid);
   }
 
   Future<void> _downloadBank(Map<String, dynamic> bank, {int? existingLocalId}) async {

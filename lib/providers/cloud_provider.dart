@@ -106,8 +106,8 @@ class CloudProvider with ChangeNotifier {
     await _firestore.collection('users').doc(uid).update({'role': role});
   }
 
-  Future<void> updateUserPermissions(String uid, List<String> bankIds) async {
-    await _firestore.collection('users').doc(uid).update({'accessible_banks': bankIds});
+  Future<void> updateUserPermissions(String uid, Map<String, bool> bankPermissions) async {
+    await _firestore.collection('users').doc(uid).update({'accessible_banks': bankPermissions});
   }
 
   Future<void> updateUserBanStatus(String uid, {bool? isDisabled, bool? canMessage, bool? canAccessQuizzes, bool? canViewInbox}) async {
@@ -214,8 +214,9 @@ class CloudProvider with ChangeNotifier {
 
   // --- User Actions ---
 
-  Future<List<Map<String, dynamic>>> getAccessibleBanks(List<String> bankIds, {String? adminUid}) async {
+  Future<List<Map<String, dynamic>>> getAccessibleBanks(Map<String, dynamic> bankPermissions, {String? adminUid}) async {
     final Map<String, Map<String, dynamic>> banksMap = {};
+    final List<String> bankIds = bankPermissions.keys.where((k) => bankPermissions[k] == true).toList();
 
     // 1. Get banks by ID list (explicit permissions)
     if (bankIds.isNotEmpty) {
@@ -252,11 +253,27 @@ class CloudProvider with ChangeNotifier {
   }
 
   Future<List<Map<String, dynamic>>> downloadBankQuestions(String bankId) async {
-    final snapshot = await _firestore.collection('question_banks')
+    List<Map<String, dynamic>> allQuestions = [];
+    QuerySnapshot snapshot = await _firestore.collection('question_banks')
         .doc(bankId)
         .collection('cloud_questions')
+        .limit(100)
         .get();
-    return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+    
+    allQuestions.addAll(snapshot.docs.map((doc) => {'id': doc.id, ...doc.data() as Map<String, dynamic>}));
+
+    while (snapshot.docs.length == 100) {
+      final lastDoc = snapshot.docs.last;
+      snapshot = await _firestore.collection('question_banks')
+          .doc(bankId)
+          .collection('cloud_questions')
+          .startAfterDocument(lastDoc)
+          .limit(100)
+          .get();
+      allQuestions.addAll(snapshot.docs.map((doc) => {'id': doc.id, ...doc.data() as Map<String, dynamic>}));
+    }
+    
+    return allQuestions;
   }
 
   // --- General Meta ---
