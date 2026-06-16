@@ -375,10 +375,21 @@ class _SuperAdminDashboardState extends State<SuperAdminDashboard> {
                                 ),
                                 ElevatedButton(
                                   onPressed: () async {
-                                    await cloud.deleteUserData(user['uid']);
-                                    if (context.mounted) {
-                                      Navigator.pop(context);
-                                      _refresh();
+                                    try {
+                                      await cloud.deleteUserData(user['uid']);
+                                      if (context.mounted) {
+                                        Navigator.pop(context);
+                                        _refresh();
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(content: Text('User deleted successfully')),
+                                        );
+                                      }
+                                    } catch (e) {
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(content: Text('Delete failed: $e'), backgroundColor: Colors.red),
+                                        );
+                                      }
                                     }
                                   },
                                   style: ElevatedButton.styleFrom(backgroundColor: Colors.red),

@@ -72,13 +72,17 @@ class CloudProvider with ChangeNotifier {
     final now = DateTime.now();
     final startOfDay = DateTime(now.year, now.month, now.day);
     
-    // Simplified query: Fetch all messages from today. 
-    // We then filter by userId in memory to avoid needing a composite index (sender_uid + timestamp).
+    // We MUST filter by sender_uid in the query because Firestore security rules
+    // prevent users from reading messages sent by others.
+    // We filter by timestamp in memory to avoid requiring a composite index.
     final snapshot = await _firestore.collection('messages')
-        .where('timestamp', isGreaterThanOrEqualTo: startOfDay)
+        .where('sender_uid', isEqualTo: userId)
         .get();
     
-    final userMessagesCount = snapshot.docs.where((doc) => doc.data()['sender_uid'] == userId).length;
+    final userMessagesCount = snapshot.docs.where((doc) {
+      final ts = (doc.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
+      return ts != null && ts.toDate().isAfter(startOfDay);
+    }).length;
     
     if (userMessagesCount >= 5) {
       throw Exception('Daily message limit reached (5 per day). Please try again tomorrow.');
